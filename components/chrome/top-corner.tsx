@@ -1,0 +1,208 @@
+"use client"
+
+// ---------------------------------------------------------------------------
+// Top-left corner — the wordmark doubles as the file menu, the file name is
+// inline-editable. No toolbar chrome beyond that, on purpose.
+// ---------------------------------------------------------------------------
+
+import { useRef, useState } from "react"
+import { useSquig } from "@/lib/store"
+import { CaretDownIcon } from "@phosphor-icons/react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuShortcut,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+
+export function TopCorner() {
+  const fileName = useSquig((s) => s.fileName)
+  const contextRow = useSquig((s) => s.contextRow)
+  const st = useSquig.getState
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(fileName)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const commit = () => {
+    st().setFileName(draft.trim() || "untitled scribbles")
+    setEditing(false)
+  }
+
+  const exportDoc = () => {
+    const blob = new Blob([st().serialize()], { type: "application/json" })
+    const a = document.createElement("a")
+    a.href = URL.createObjectURL(blob)
+    a.download = `${st().fileName.replace(/[^\w -]+/g, "").trim() || "squig"}.squig.json`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
+
+  return (
+    <div
+      className="absolute top-4 left-4 z-30 flex items-center gap-1 rounded-xl border bg-background py-1 pr-3 pl-1.5 shadow-md"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".json,.squig,application/json"
+        className="hidden"
+        onChange={async (e) => {
+          const file = e.target.files?.[0]
+          if (!file) return
+          const ok = st().loadDoc(await file.text())
+          if (!ok) window.alert("that file didn't look like a squig doc")
+          e.target.value = ""
+        }}
+      />
+
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <button
+            type="button"
+            className="flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-accent"
+            title="file menu"
+          >
+            <span className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none">
+              squig
+            </span>
+            <CaretDownIcon className="size-3 text-muted-foreground" weight="bold" />
+          </button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-56">
+          <DropdownMenuItem onSelect={() => st().newFile()}>New file</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>Open…</DropdownMenuItem>
+          <DropdownMenuItem onSelect={exportDoc}>
+            Export
+            <DropdownMenuShortcut>.squig.json</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => {
+              setDraft(st().fileName)
+              setEditing(true)
+            }}
+          >
+            Rename
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => st().setCommandOpen(true)}>
+            Find anything
+            <DropdownMenuShortcut>⌘K</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => st().undo()}>
+            Undo
+            <DropdownMenuShortcut>⌘Z</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => st().redo()}>
+            Redo
+            <DropdownMenuShortcut>⇧⌘Z</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => st().setContextRow(!contextRow)}>
+            {contextRow ? "Hide context row" : "Show context row"}
+          </DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => st().setViewport({ x: 0, y: 0, zoom: 1 })}>
+            Reset zoom
+            <DropdownMenuShortcut>⌘0</DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onSelect={() => st().clearCanvas()}>
+            Clear canvas
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+
+      <span className="h-4 w-px bg-border" />
+
+      {editing ? (
+        <input
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            e.stopPropagation()
+            if (e.key === "Enter") commit()
+            if (e.key === "Escape") setEditing(false)
+          }}
+          className="ml-1 w-44 rounded bg-transparent px-1 text-sm outline-none"
+        />
+      ) : (
+        <button
+          type="button"
+          className="ml-1 max-w-52 truncate rounded px-1 text-sm text-muted-foreground hover:text-foreground"
+          onClick={() => {
+            setDraft(fileName)
+            setEditing(true)
+          }}
+          title="rename"
+        >
+          {fileName}
+        </button>
+      )}
+    </div>
+  )
+}
+
+export function ZoomPill() {
+  const zoom = useSquig((s) => s.viewport.zoom)
+  const st = useSquig.getState
+
+  const zoomBy = (factor: number) => {
+    const v = st().viewport
+    const cx = window.innerWidth / 2
+    const cy = window.innerHeight / 2
+    const z = Math.min(4, Math.max(0.1, v.zoom * factor))
+    const k = z / v.zoom
+    st().setViewport({ zoom: z, x: cx - (cx - v.x) * k, y: cy - (cy - v.y) * k })
+  }
+
+  return (
+    <div
+      className="absolute bottom-4 left-4 z-30 flex items-center gap-0.5 rounded-xl border bg-background px-1 py-0.5 shadow-md"
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      <button
+        type="button"
+        className="size-7 rounded-lg text-sm text-muted-foreground hover:bg-accent"
+        onClick={() => zoomBy(1 / 1.25)}
+      >
+        −
+      </button>
+      <button
+        type="button"
+        className="min-w-11 rounded-lg px-1 py-1 text-center text-xs text-muted-foreground tabular-nums hover:bg-accent"
+        onClick={() => st().setViewport({ x: 0, y: 0, zoom: 1 })}
+        title="reset view (⌘0)"
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+      <button
+        type="button"
+        className="size-7 rounded-lg text-sm text-muted-foreground hover:bg-accent"
+        onClick={() => zoomBy(1.25)}
+      >
+        +
+      </button>
+    </div>
+  )
+}
+
+/** Bottom-right nudge toward ⌘K. */
+export function CommandHint() {
+  const st = useSquig.getState
+  return (
+    <button
+      type="button"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={() => st().setCommandOpen(true)}
+      className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border bg-background px-3.5 py-1.5 text-xs text-muted-foreground shadow-md hover:text-foreground"
+    >
+      search everything
+      <kbd className="inline-flex h-4 items-center rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>
+    </button>
+  )
+}
