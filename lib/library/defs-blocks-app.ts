@@ -628,9 +628,9 @@ export const kanbanBoardDef: ComponentDef = {
         }
         y += cardH + 10
       }
-      if (y + 20 < bodyY + bodyH) {
+      if (y + 20 < bodyY + bodyH && colW > 110) {
         prims.push(...icon("plus", x + 22, y + 8, 11, { stroke: "faint" }))
-        prims.push(text(x + 34, y + 12, "Add a card", 12, { color: "faint" }))
+        prims.push(text(x + 34, y + 12, truncate("Add a card", 12, colW - 44), 12, { color: "faint" }))
       }
     }
     return prims
@@ -976,7 +976,9 @@ export const emptyBlockDef: ComponentDef = {
     y += d + 26
     prims.push(text(w / 2, y, truncate(str(p, "title", "Nothing here yet"), 16, w - 32), 16, { align: "center", bold: true }))
     y += 20
-    prims.push(text(w / 2, y, truncate("Make one and it shows up right here.", 12, w - 32), 12, { align: "center", color: "muted" }))
+    if (y < h - 6) {
+      prims.push(text(w / 2, y, truncate("Make one and it shows up right here.", 12, w - 32), 12, { align: "center", color: "muted" }))
+    }
     y += 18
     if (cta && y + 40 < h) {
       prims.push(...sub(buttonDef, { label: "Make one", variant: "filled", size: "sm" }, w / 2 - 62, y, 124, 34))
@@ -1072,7 +1074,9 @@ export const profileHeaderDef: ComponentDef = {
     prims.push(text(pad, y, truncate("Pablo Scribbles", 20, w - pad * 2 - 110), 20, { bold: true }))
     prims.push(text(pad + textWidth("Pablo Scribbles", 20) + 18, y - 2, "@squiggle", 13, { color: "muted" }))
     y += 20
-    prims.push(text(pad, y, truncate("Draws boxes. Occasionally circles. Rarely on time.", 13, w - pad * 2 - 20), 13, { color: "muted" }))
+    if (y < h - 6) {
+      prims.push(text(pad, y, truncate("Draws boxes. Occasionally circles. Rarely on time.", 13, w - pad * 2 - 20), 13, { color: "muted" }))
+    }
     y += 24
 
     if (bool(p, "cta")) {
@@ -1177,15 +1181,16 @@ export const aiInputDef: ComponentDef = {
 
     const cy = ty + barH / 2
     let x = 12
+    const chipH = clamp(barH - 14, 18, 30)
     if (bool(p, "attach")) {
-      prims.push(ellipse(x, cy - 15, 30, 30, { stroke: "muted" }))
-      prims.push(...icon("paperclip", x + 15, cy, 14, { stroke: "muted" }))
-      x += 40
+      prims.push(ellipse(x, cy - chipH / 2, chipH, chipH, { stroke: "muted" }))
+      prims.push(...icon("paperclip", x + chipH / 2, cy, 14, { stroke: "muted" }))
+      x += chipH + 10
     }
     const model = truncate(str(p, "model", "Squig 4.5"), 12, w * 0.34)
     const chipW = textWidth(model, 12) + 52
     if (x + chipW < w - 60) {
-      prims.push(ellipse(x, cy - 15, chipW, 30, { stroke: "muted" }))
+      prims.push(ellipse(x, cy - chipH / 2, chipW, chipH, { stroke: "muted" }))
       prims.push(...icon("sparkle", x + 17, cy, 13, { stroke: "muted" }))
       prims.push(text(x + 30, cy + 4, model, 12))
       prims.push(...icon("caret-down", x + chipW - 14, cy, 10, { stroke: "muted" }))
@@ -1313,9 +1318,11 @@ export const aiPromptSuggestionsDef: ComponentDef = {
     for (let i = 0; i < n; i++) {
       const x = i * (cw + gap)
       prims.push(rect(x, 0, cw, ch))
-      prims.push(...icon(names[i], x + 22, 24, 16, { stroke: "muted" }))
-      const lines = wrap(copy[i], 13, cw - 28, ch > 76 ? 2 : 1)
-      lines.forEach((l, li) => prims.push(text(x + 14, 54 + li * 17, l, 13)))
+      const iy = Math.min(24, ch * 0.26)
+      prims.push(...icon(names[i], x + 22, iy, Math.min(16, ch * 0.2), { stroke: "muted" }))
+      const ty = Math.min(54, iy + 22)
+      const lines = wrap(copy[i], 13, cw - 28, ch - ty > 22 ? 2 : 1)
+      lines.forEach((l, li) => prims.push(text(x + 14, ty + li * 17, l, 13)))
       if (cw > 110 && ch > 76) prims.push(...icon("arrow-right", x + cw - 20, ch - 16, 12, { stroke: "faint" }))
     }
     return prims
@@ -1407,7 +1414,8 @@ export const aiAgentCardDef: ComponentDef = {
     prims.push(text(tx + 14, pad + 36, status, 12, { color: "muted" }))
 
     const by = h - 52
-    prims.push(...loremLines(pad, pad + d + 24, w - pad * 2, Math.max(1, Math.min(2, Math.floor((by - pad - d - 24) / 16))), 16))
+    const bodyN = Math.min(2, Math.floor((by - pad - d - 26) / 16))
+    if (bodyN > 0) prims.push(...loremLines(pad, pad + d + 24, w - pad * 2, bodyN, 16))
     prims.push(hair(pad, by, w - pad * 2))
     prims.push(text(pad, by + 24, "12 runs · 2 regrets", 11, { color: "muted" }))
     if (bool(p, "cta") && w > 220) {
@@ -1567,15 +1575,15 @@ export const cartDef: ComponentDef = {
     const variants = ["A5 · dotted", "Pack of 4 · black", "38 stickers", "Pink, obviously"]
     const prices = ["$24.00", "$18.00", "$6.00", "$4.00"]
     const avail = h - y - pad - footH
-    const n = clamp(Math.min(num(p, "items", 3), Math.floor(avail / 66)), 1, 4)
-    const rowH = Math.min(84, avail / Math.max(1, n))
+    const n = clamp(Math.min(num(p, "items", 3), Math.floor(avail / 66)), 0, 4)
+    const rowH = n > 0 ? Math.min(84, avail / n) : 0
     const showStepper = w > 420
 
     for (let i = 0; i < n; i++) {
       const ry = y + i * rowH
       const cy = ry + rowH / 2
       if (i > 0) prims.push(hair(pad, ry, cw))
-      const td = Math.min(56, rowH - 18)
+      const td = clamp(rowH - 18, 22, 56)
       prims.push(rect(pad, cy - td / 2, td, td, { stroke: "faint" }))
       prims.push(...icon("image", pad + td / 2, cy, td * 0.44, { stroke: "faint" }))
       const tx = pad + td + 14
@@ -1691,7 +1699,7 @@ export const productDetailDef: ComponentDef = {
     const prims: Prim[] = [rect(0, 0, w, h)]
     const pad = clamp(w * 0.032, 14, 22)
     const thumbs = bool(p, "thumbs") && h > 300
-    const imgW = clamp(w * 0.44, 160, w - 260)
+    const imgW = clamp(w * 0.44, Math.min(150, w * 0.4), w * 0.5)
     const thumbH = thumbs ? 72 : 0
     const imgH = h - pad * 2 - thumbH
     prims.push(rect(pad, pad, imgW, imgH, { stroke: "faint" }))
@@ -1803,8 +1811,8 @@ export const productGridDef: ComponentDef = {
         const imgH = ch * (ch > 140 ? 0.62 : 0.55)
         prims.push(line(x, y + imgH, x + cw, y + imgH, { stroke: "faint" }))
         prims.push(...icon("image", x + cw / 2, y + imgH / 2, Math.min(36, imgH * 0.34), { stroke: "faint" }))
-        prims.push(text(x + 12, y + imgH + 22, truncate(names[i % names.length], 13, cw - 24), 13))
-        if (showPrice) prims.push(text(x + 12, y + imgH + 42, prices[i % prices.length], 15, { bold: true }))
+        if (imgH + 28 < ch) prims.push(text(x + 12, y + imgH + 22, truncate(names[i % names.length], 13, cw - 24), 13))
+        if (showPrice && imgH + 50 < ch) prims.push(text(x + 12, y + imgH + 42, prices[i % prices.length], 15, { bold: true }))
         if (ch - imgH > 60) prims.push(...starRow(x + cw - 74, y + imgH + 38, 10, 5))
       }
     }
@@ -2232,7 +2240,7 @@ export const profileScreenDef: ComponentDef = {
     const headerH = clamp(h * 0.32, 180, 250)
     prims.push(...sub(profileHeaderDef, { cover: true, stats: true, cta: true }, pad, navH + 18, w - pad * 2, headerH))
     let y = navH + 18 + headerH + 18
-    if (bool(p, "tabs")) {
+    if (bool(p, "tabs") && y + 48 < h) {
       prims.push(...sub(tabsDef, { labels: "Boards, Liked, About", active: 1 }, pad, y, Math.min(360, w - pad * 2), 40))
       prims.push(hair(pad, y + 38, w - pad * 2))
       y += 56

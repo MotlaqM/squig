@@ -22,6 +22,8 @@ const list = (p: Props, k: string, fallback: string): string[] => {
   return out.length ? out : fallback.split(",").map((s) => s.trim())
 }
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
+/** textWidth with a little slack — the sketch font runs a touch wide of the estimate */
+const advance = (s: string, size: number): number => textWidth(s, size) * 1.08
 /** baseline for text vertically centred in a band of height `bh` starting at `top` */
 const mid = (top: number, bh: number, size: number): number => top + bh / 2 + size * 0.35
 /** safe indexed pick from a cycling pool */
@@ -177,7 +179,7 @@ export const fabDef: ComponentDef = {
       return prims
     }
     const label = truncate(str(p, "label", "New note"), fs, maxLabelW)
-    const total = isz + 8 + textWidth(label, fs)
+    const total = isz + 8 + advance(label, fs)
     const sx = Math.max(12, (bw - total) / 2)
     prims.push(...icon(ic, sx + isz / 2, bh / 2, isz))
     prims.push(text(sx + isz + 8, mid(0, bh, fs), label, fs, { bold: true }))
@@ -248,7 +250,7 @@ export const chipGroupDef: ComponentDef = {
     for (let i = 0; i < n; i++) {
       const raw = pick(labels, i)
       const extra = 24 + (dismiss ? 16 : 0)
-      const cw = Math.min(w, textWidth(raw, fs) + extra)
+      const cw = Math.min(w, advance(raw, fs) + extra)
       const label = truncate(raw, fs, Math.max(6, cw - extra))
       if (x > 0 && x + cw > w) {
         x = 0
@@ -296,7 +298,7 @@ export const formFieldDef: ComponentDef = {
     const ly = Math.max(ls, labelH - 6)
     const prims: Prim[] = [text(0, ly, truncate(label, ls, w - 14), ls, { bold: true })]
     if (bool(p, "required")) {
-      prims.push(text(Math.min(w - 8, textWidth(label, ls) + 5), ly, "*", ls, { color: "muted" }))
+      prims.push(text(Math.min(w - 8, advance(label, ls) + 5), ly, "*", ls, { color: "muted" }))
     }
     prims.push(rect(0, labelH, w, fieldH, err ? { strokeWidth: 2 } : {}))
     const isz = clamp(fieldH * 0.42, 11, 15)
@@ -1028,7 +1030,7 @@ export const kbdDef: ComponentDef = {
     const y = (h - kh) / 2
     const fs = clamp(kh * 0.46, 9, 15)
     const sep = plus ? 16 : 6
-    const widths = keys.map((k) => Math.max(kh * 0.9, textWidth(k, fs) + 14))
+    const widths = keys.map((k) => Math.max(kh * 0.9, advance(k, fs) + 14))
     let total = sep * (keys.length - 1)
     for (const kw of widths) total += kw
     const scale = total > w ? w / total : 1
@@ -1084,7 +1086,7 @@ export const timelineDef: ComponentDef = {
       const tw = Math.max(20, w - tx - timeW - 6)
       const showSub = rowH > 34
       prims.push(text(tx, showSub ? cy - 1 : mid(cy - rowH / 2, rowH, 14), truncate(pick(labels, i), 14, tw), 14, { bold: isDone }))
-      if (showSub) prims.push(line(tx, cy + 12, tx + tw * 0.75, cy + 12, { stroke: "muted", strokeWidth: 1.1 }))
+      if (showSub) prims.push(line(tx, cy + 13, tx + tw * 0.6, cy + 13, { stroke: "muted", strokeWidth: 1.1 }))
       if (times) prims.push(text(w, showSub ? cy - 1 : mid(cy - rowH / 2, rowH, 11), pick(stamps, i), 11, { align: "right", color: "muted" }))
     }
     return prims
@@ -1330,8 +1332,8 @@ export const calendarDef: ComponentDef = {
       const cx = (idx % 7) * cellW + cellW / 2
       const cy = gridTop + Math.floor(idx / 7) * cellH + cellH / 2 - (events ? cellH * 0.08 : 0)
       if (day === sel) {
-        const d = Math.min(cellW, cellH) * 0.74
-        prims.push(ellipse(cx - d / 2, cy - d / 2, d, d, INK_FILL))
+        const d = Math.min(cellW, cellH) * 0.78
+        prims.push(ellipse(cx - d / 2, cy - d / 2, d, d, { fill: "solid", fillColor: "faint", strokeWidth: 1.8 }))
       }
       prims.push(text(cx, cy + fs * 0.35, String(day), fs, { align: "center", bold: day === sel }))
       if (events && eventDays.indexOf(day) !== -1 && cellH > 22) {
@@ -1499,7 +1501,7 @@ export const cardStatDef: ComponentDef = {
       const delta = str(p, "delta", "+12.5%")
       prims.push(...icon(trend === "up" ? "arrow-up" : trend === "down" ? "arrow-down" : "minus", pad + 6, dy - 4, 12))
       prims.push(text(pad + 18, dy, truncate(delta, 12, w * 0.4), 12, { bold: true }))
-      const px = pad + 18 + textWidth(delta, 12) + 8
+      const px = pad + 18 + advance(delta, 12) + 10
       const periodW = w - pad - px - (spark ? w * 0.3 : 0)
       if (periodW > 26) prims.push(text(px, dy, truncate("vs last month", 12, periodW), 12, { color: "muted" }))
       if (spark) {
@@ -1616,7 +1618,7 @@ export const cardMediaDef: ComponentDef = {
     if (meta) {
       prims.push(...icon("clock", pad + 6, metaY - 4, 12, { stroke: "muted" }))
       prims.push(text(pad + 18, metaY, "4 min read", 11, { color: "muted" }))
-      const dx = pad + 18 + textWidth("4 min read", 11) + 8
+      const dx = pad + 18 + advance("4 min read", 11) + 8
       if (dx + 40 < w - pad) {
         prims.push(ellipse(dx, metaY - 5, 3, 3, { fill: "solid", fillColor: "muted", stroke: "muted" }))
         prims.push(text(dx + 10, metaY, truncate("Mar 4", 11, w - pad - dx - 12), 11, { color: "muted" }))
@@ -1659,8 +1661,8 @@ export const cardPricingDef: ComponentDef = {
     y += ps + 6
     const price = truncate(str(p, "price", "$24"), ps, Math.max(10, w - pad * 2 - 26))
     prims.push(text(pad, y, price, ps, { bold: true }))
-    const period = truncate(str(p, "period", "/mo"), 12, Math.max(8, w - pad - (pad + textWidth(price, ps) + 6)))
-    prims.push(text(pad + textWidth(price, ps) + 6, y, period, 12, { color: "muted" }))
+    const px = pad + advance(price, ps) + 8
+    prims.push(text(px, y, truncate(str(p, "period", "/mo"), 12, Math.max(8, w - pad - px)), 12, { color: "muted" }))
     y += 16
     prims.push(line(pad, y, w - pad, y, { stroke: "faint" }))
     const ctaH = clamp(h * 0.12, 30, 40)
@@ -1806,7 +1808,7 @@ export const cardBlogDef: ComponentDef = {
     prims.push(rect(0, 0, w, imgH, { stroke: "faint" }))
     prims.push(...icon("image", w / 2, imgH / 2, clamp(Math.min(w, imgH) * 0.26, 18, 44), { stroke: "muted" }))
     let y = imgH + pad + 8
-    const tw = Math.min(w - pad * 2, textWidth(str(p, "tag", "Design"), 10) + 18)
+    const tw = Math.min(w - pad * 2, advance(str(p, "tag", "Design"), 10) + 18)
     const tag = truncate(str(p, "tag", "Design"), 10, Math.max(6, tw - 14))
     prims.push(ellipse(pad, y - 13, tw, 20, { stroke: "muted" }))
     prims.push(text(pad + tw / 2, y + 1, tag, 10, { align: "center", color: "muted" }))
@@ -1854,7 +1856,7 @@ export const cardNotificationDef: ComponentDef = {
     prims.push(...icon(str(p, "icon", "bell"), pad + d / 2, pad + d / 2, d * 0.5))
     const tx = pad + d + 12
     const stamp = truncate(str(p, "timestamp", "2m"), 11, Math.max(10, w * 0.3))
-    const stampW = textWidth(stamp, 11) + 10
+    const stampW = advance(stamp, 11) + 10
     prims.push(text(tx, pad + 14, truncate(str(p, "title", ""), 14, Math.max(20, w - tx - pad - stampW)), 14, { bold: true }))
     prims.push(text(w - pad, pad + 13, stamp, 11, { align: "right", color: "muted" }))
     const actions = bool(p, "actions")
@@ -1908,7 +1910,7 @@ export const menubarDef: ComponentDef = {
     }
     const rightLimit = trailing ? w - 84 : w - 10
     items.forEach((it, i) => {
-      const tw = textWidth(it, fs)
+      const tw = advance(it, fs)
       if (x + tw + 8 > rightLimit) return
       if (i === active) prims.push(rect(x - 8, 3, tw + 16, h - 6, FAINT_FILL))
       prims.push(text(x, mid(0, h, fs), it, fs, { color: i === active ? "ink" : "muted", bold: i === active }))
@@ -2173,7 +2175,9 @@ export const stepperDef: ComponentDef = {
       }
       const done = i + 1 < active
       const cur = i + 1 === active
-      prims.push(ellipse(cx - d / 2, cy - d / 2, d, d, done ? INK_FILL : cur ? { strokeWidth: 2 } : { stroke: "faint" }))
+      prims.push(
+        ellipse(cx - d / 2, cy - d / 2, d, d, done ? { fill: "solid", fillColor: "faint" } : cur ? { strokeWidth: 2 } : { stroke: "faint" })
+      )
       if (done) prims.push(...icon("check", cx, cy, d * 0.5))
       else prims.push(text(cx, cy + d * 0.17, String(i + 1), d * 0.48, { align: "center", color: cur ? "ink" : "muted" }))
       if (showLabels) {
@@ -2221,9 +2225,10 @@ export const statDef: ComponentDef = {
       const trend = str(p, "trend", "up")
       const delta = str(p, "delta", "")
       prims.push(...icon(trend === "up" ? "arrow-up" : trend === "down" ? "arrow-down" : "minus", 6, dy - 4, 12))
+      const dw = advance(delta, 12)
       prims.push(text(18, dy, truncate(delta, 12, w * 0.45), 12, { bold: true }))
-      const px = 18 + textWidth(delta, 12) + 8
-      if (w - px > 30) prims.push(text(px, dy, truncate(str(p, "period", ""), 12, w - px), 12, { color: "muted" }))
+      const px = 18 + dw + 10
+      if (w - px > 34) prims.push(text(px, dy, truncate(str(p, "period", ""), 12, w - px), 12, { color: "muted" }))
     }
     return prims
   },
@@ -2283,11 +2288,10 @@ export const dataTableDef: ComponentDef = {
     prims.push(line(0, tTop + headerH, w, tTop + headerH, { stroke: "faint" }))
     prims.push(rect(cbW / 2 - 7, tTop + headerH / 2 - 7, 14, 14, { stroke: "muted" }))
     prims.push(...icon("minus", cbW / 2, tTop + headerH / 2, 10))
-    const heads = ["Name", "Status", "Amount"]
-    heads.forEach((hd, i) => {
-      prims.push(text(colX[i], mid(tTop, headerH, 12), hd, 12, { bold: true }))
-    })
-    prims.push(...icon("caret-up-down", colX[0] + textWidth("Name", 12) + 9, tTop + headerH / 2, 10, { stroke: "muted" }))
+    prims.push(text(colX[0], mid(tTop, headerH, 12), "Name", 12, { bold: true }))
+    prims.push(...icon("caret-up-down", colX[0] + advance("Name", 12) + 13, tTop + headerH / 2, 10, { stroke: "muted" }))
+    prims.push(text(colX[1], mid(tTop, headerH, 12), "Status", 12, { bold: true }))
+    prims.push(text(cbW + contentW - 6, mid(tTop, headerH, 12), "Amount", 12, { align: "right", bold: true }))
     const bodyTop = tTop + headerH
     const bodyH = Math.max(16, h - footerH - bodyTop)
     const rowH = bodyH / rows
