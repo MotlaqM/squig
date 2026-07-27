@@ -24,15 +24,23 @@ const HAND = {
   roughness: 0.5,
   bowing: 0.6,
   strokeWidth: 1.25,
-  hachureGap: 7,
-  hachureAngle: -41,
-  fillWeight: 0.7,
   /** default corner rounding for rects that don't ask for one */
   radius: 3,
 }
 
-/** Hachure over "ink" would read as a scribbled-out box — soften it. */
-const HACHURE_INK = "#a8a29a"
+/**
+ * Filled surfaces read as soft grey washes, not scribbled-in boxes. Diagonal
+ * hatching is the single loudest thing rough.js does, and on a canvas full of
+ * buttons it turns the whole page into static — so "hachure" resolves to a
+ * flat tint here. `fill: "solid"` still means genuinely opaque (menus, popovers).
+ */
+const WASH: Record<string, string> = {
+  ink: "#e4e0d8",
+  muted: "#eeebe5",
+  faint: "#f4f2ee",
+  paper: "#fdfcfa",
+  accent: "#e4e0d8",
+}
 
 function primOptions(p: Prim, seed: number): Options {
   const o = "o" in p ? p.o : undefined
@@ -48,16 +56,8 @@ function primOptions(p: Prim, seed: number): Options {
     preserveVertices: true,
   }
   if (o?.fill && o.fill !== "none") {
-    opts.fill = INK[o.fillColor ?? "faint"]
-    if (o.fill === "hachure") {
-      opts.fillStyle = "hachure"
-      opts.hachureGap = HAND.hachureGap
-      opts.hachureAngle = HAND.hachureAngle
-      opts.fillWeight = HAND.fillWeight
-      if (o.fillColor === "ink") opts.fill = HACHURE_INK
-    } else {
-      opts.fillStyle = "solid"
-    }
+    opts.fillStyle = "solid"
+    opts.fill = o.fill === "hachure" ? WASH[o.fillColor ?? "faint"] : INK[o.fillColor ?? "faint"]
   }
   return opts
 }
@@ -122,7 +122,7 @@ export function primsToPaths(
     try {
       switch (p.t) {
         case "rect": {
-          const r = p.r ?? HAND.radius
+          const r = p.r ?? p.o?.r ?? HAND.radius
           paths.push(...drawableToPaths(gen.path(roundRectPath(p.x, p.y, p.w, p.h, r), primOptions(p, s)), dash))
           break
         }

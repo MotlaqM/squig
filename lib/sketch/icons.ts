@@ -96,6 +96,7 @@ export function icon(name: string, cx: number, cy: number, size: number, o?: Pri
       size,
       vb: PHOSPHOR_VB,
       mode: "fill",
+      name: resolved,
       o,
     },
   ]

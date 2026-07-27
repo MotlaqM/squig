@@ -5,8 +5,9 @@
 // inline-editable. No toolbar chrome beyond that, on purpose.
 // ---------------------------------------------------------------------------
 
-import { useRef, useState } from "react"
+import { useState } from "react"
 import { useSquig } from "@/lib/store"
+import { exportDoc, importDoc } from "@/lib/file-io"
 import { CaretDownIcon } from "@phosphor-icons/react"
 import {
   DropdownMenu,
@@ -23,20 +24,10 @@ export function TopCorner() {
   const st = useSquig.getState
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(fileName)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const commit = () => {
     st().setFileName(draft.trim() || "untitled scribbles")
     setEditing(false)
-  }
-
-  const exportDoc = () => {
-    const blob = new Blob([st().serialize()], { type: "application/json" })
-    const a = document.createElement("a")
-    a.href = URL.createObjectURL(blob)
-    a.download = `${st().fileName.replace(/[^\w -]+/g, "").trim() || "squig"}.squig.json`
-    a.click()
-    URL.revokeObjectURL(a.href)
   }
 
   return (
@@ -44,20 +35,6 @@ export function TopCorner() {
       className="absolute top-4 left-4 z-30 flex items-center gap-1 rounded-xl border bg-background py-1 pr-3 pl-1.5 shadow-md"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,.squig,application/json"
-        className="hidden"
-        onChange={async (e) => {
-          const file = e.target.files?.[0]
-          if (!file) return
-          const ok = st().loadDoc(await file.text())
-          if (!ok) window.alert("that file didn't look like a squig doc")
-          e.target.value = ""
-        }}
-      />
-
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <button
@@ -73,7 +50,7 @@ export function TopCorner() {
         </DropdownMenuTrigger>
         <DropdownMenuContent align="start" className="w-56">
           <DropdownMenuItem onSelect={() => st().newFile()}>New file</DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => fileInputRef.current?.click()}>Open…</DropdownMenuItem>
+          <DropdownMenuItem onSelect={importDoc}>Open…</DropdownMenuItem>
           <DropdownMenuItem onSelect={exportDoc}>
             Export
             <DropdownMenuShortcut>.squig.json</DropdownMenuShortcut>

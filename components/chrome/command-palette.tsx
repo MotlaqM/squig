@@ -10,6 +10,7 @@ import { useSquig } from "@/lib/store"
 import { ALL_DEFS, matches, type ComponentDef } from "@/lib/library/registry"
 import { SketchPrims } from "@/components/canvas/sketch"
 import { breakApart } from "@/lib/library/break-apart"
+import { exportDoc, importDoc } from "@/lib/file-io"
 import type { ComponentNode } from "@/lib/types"
 import {
   MagnifyingGlassIcon,
@@ -47,8 +48,14 @@ type Row = { kind: "action"; action: Action } | { kind: "def"; def: ComponentDef
 
 const SECTION_ORDER = ["Tools", "Edit", "Arrange", "File", "Components", "Blocks"]
 
+/** Mount only while open, so every ⌘K starts from a blank box with no reset dance. */
 export function CommandPalette() {
   const open = useSquig((s) => s.commandOpen)
+  if (!open) return null
+  return <Palette />
+}
+
+function Palette() {
   const selection = useSquig((s) => s.selection)
   const nodes = useSquig((s) => s.nodes)
   const st = useSquig.getState
@@ -57,17 +64,12 @@ export function CommandPalette() {
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const close = useCallback(() => st().setCommandOpen(false), [st])
 
   useEffect(() => {
-    if (open) {
-      setQuery("")
-      setActive(0)
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }
-  }, [open])
+    inputRef.current?.focus()
+  }, [])
 
   const hasSel = selection.length > 0
   const oneComponent = selection.length === 1 && nodes[selection[0]]?.type === "component"
@@ -109,19 +111,8 @@ export function CommandPalette() {
       { id: "zoom-reset", label: "Reset zoom", hint: "⌘0", section: "Arrange", keywords: "100% fit view", icon: CornersOutIcon, run: () => st().setViewport({ x: 0, y: 0, zoom: 1 }) },
 
       { id: "new", label: "New file", section: "File", keywords: "blank clear reset", icon: FileIcon, run: () => st().newFile() },
-      {
-        id: "export", label: "Export .squig", section: "File", keywords: "save download json",
-        icon: DownloadSimpleIcon,
-        run: () => {
-          const blob = new Blob([st().serialize()], { type: "application/json" })
-          const a = document.createElement("a")
-          a.href = URL.createObjectURL(blob)
-          a.download = `${st().fileName.replace(/[^\w -]+/g, "") || "squig"}.squig.json`
-          a.click()
-          URL.revokeObjectURL(a.href)
-        },
-      },
-      { id: "import", label: "Import .squig", section: "File", keywords: "open load json", icon: UploadSimpleIcon, run: () => fileInputRef.current?.click() },
+      { id: "export", label: "Export .squig", section: "File", keywords: "save download json", icon: DownloadSimpleIcon, run: exportDoc },
+      { id: "import", label: "Import .squig", section: "File", keywords: "open load json", icon: UploadSimpleIcon, run: importDoc },
     ],
     [st, hasSel, oneComponent, selection.length]
   )
@@ -142,12 +133,9 @@ export function CommandPalette() {
     ]
   }, [query, actions])
 
-  useEffect(() => setActive(0), [query])
-
   useEffect(() => {
-    if (!open) return
     listRef.current?.querySelector<HTMLElement>('[data-active="true"]')?.scrollIntoView({ block: "nearest" })
-  }, [active, open])
+  }, [active])
 
   const runRow = useCallback(
     (row: Row) => {
@@ -157,8 +145,6 @@ export function CommandPalette() {
     },
     [st, close]
   )
-
-  if (!open) return null
 
   // group consecutive rows by section for headers
   const sections: { title: string; rows: { row: Row; index: number }[] }[] = []
@@ -173,20 +159,6 @@ export function CommandPalette() {
 
   return (
     <>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept=".json,.squig,application/json"
-        className="hidden"
-        onChange={async (e) => {
-          const file = e.target.files?.[0]
-          if (!file) return
-          const ok = st().loadDoc(await file.text())
-          if (!ok) window.alert("that file didn't look like a squig doc")
-          e.target.value = ""
-        }}
-      />
-
       <div className="fixed inset-0 z-50 flex flex-col justify-end" onPointerDown={close}>
         <div className="absolute inset-0 bg-foreground/10 backdrop-blur-[2px]" />
         <div
@@ -198,7 +170,10 @@ export function CommandPalette() {
             <input
               ref={inputRef}
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setActive(0)
+              }}
               placeholder="search anything — buttons, blocks, tools, undo…"
               className="w-full bg-transparent py-4 pr-4 pl-11 text-[15px] outline-none placeholder:text-muted-foreground"
               onKeyDown={(e) => {

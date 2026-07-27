@@ -21,6 +21,8 @@ export interface PrimOpts {
   fillColor?: InkColor
   roughness?: number
   dashed?: boolean
+  /** corner radius — rects only; `rect(x, y, w, h, { r: 6 })` */
+  r?: number
 }
 
 export type Prim =
@@ -52,6 +54,8 @@ export type Prim =
       size: number
       vb: number
       mode: "fill" | "stroke"
+      /** icon name, so break-apart can rebuild this as a real Icon component */
+      name?: string
     } & { o?: PrimOpts })
 
 // -- constructors -----------------------------------------------------------

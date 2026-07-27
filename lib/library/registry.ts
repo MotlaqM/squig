@@ -9,6 +9,10 @@ import { BASIC_DEFS } from "./defs-basic"
 import { DISPLAY_DEFS } from "./defs-display"
 import { NAV_DEFS } from "./defs-nav"
 import { TEMPLATE_DEFS } from "./defs-templates"
+import { MORE_DEFS } from "./defs-more"
+import { EXTRA_DEFS } from "./defs-extra"
+import { MARKETING_DEFS } from "./defs-blocks-marketing"
+import { APP_DEFS } from "./defs-blocks-app"
 
 export type ControlType = "select" | "toggle" | "text" | "number"
 
@@ -45,7 +49,30 @@ export interface ComponentDef {
   render: (props: Props, w: number, h: number) => Prim[]
 }
 
-export const ALL_DEFS: ComponentDef[] = [...BASIC_DEFS, ...DISPLAY_DEFS, ...NAV_DEFS, ...TEMPLATE_DEFS]
+const SOURCES: ComponentDef[][] = [
+  BASIC_DEFS,
+  DISPLAY_DEFS,
+  NAV_DEFS,
+  MORE_DEFS,
+  EXTRA_DEFS,
+  MARKETING_DEFS,
+  APP_DEFS,
+  TEMPLATE_DEFS,
+]
+
+/** First definition of a `kind` wins, so a duplicate slug can't shadow a core one. */
+export const ALL_DEFS: ComponentDef[] = (() => {
+  const seen = new Set<string>()
+  const out: ComponentDef[] = []
+  for (const source of SOURCES) {
+    for (const d of source) {
+      if (seen.has(d.kind)) continue
+      seen.add(d.kind)
+      out.push(d)
+    }
+  }
+  return out
+})()
 
 export const REGISTRY: Record<string, ComponentDef> = Object.fromEntries(ALL_DEFS.map((d) => [d.kind, d]))
 

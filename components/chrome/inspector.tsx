@@ -46,10 +46,10 @@ export function Inspector() {
 
   return (
     <div
-      className="absolute top-4 right-4 bottom-4 z-30 flex w-[232px] flex-col rounded-xl border bg-background shadow-md"
+      className="absolute top-4 right-4 z-30 flex max-h-[calc(100vh-2rem)] w-[232px] flex-col overflow-hidden rounded-xl border bg-background shadow-md"
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0">
         <div className="flex flex-col gap-4 p-3.5">
           {!selected.length && (
             <>
@@ -151,7 +151,7 @@ export function Inspector() {
       </ScrollArea>
 
       {selected.length > 0 && (
-        <div className="flex gap-1.5 border-t p-2.5">
+        <div className="flex shrink-0 gap-1.5 border-t p-2.5">
           {one?.type === "component" && (
             <Button
               variant="outline"

@@ -1,36 +1,84 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# squig
 
-## Getting Started
+A wireframing tool for people who think by drawing.
 
-First, run the development server:
+Open Figma and you get sucked into high fidelity. Open tldraw and you're
+hand-drawing every button from scratch. squig sits in between: an infinite
+canvas where you drag in real UI components, but everything renders as a
+hand-drawn sketch.
+
+The sketchy look is the whole point. It signals "this is not decided yet," so
+people give feedback on structure instead of arguing about corner radius.
+
+## What's in it
+
+**Infinite canvas.** Pan, zoom, multi-select, marquee, smart-guide snapping,
+keyboard nudge, undo/redo. Everything you'd expect.
+
+**A real component library.** The shadcn/ui vocabulary — buttons, inputs,
+selects, switches, tables, dialogs, tabs, nav, sidebars — plus blocks (heroes,
+pricing, FAQ, AI chat, checkout, kanban) and whole screen templates.
+
+**Everything is a component with variants.** Drop a button, and the inspector
+flips it: icon left, icon right, size, filled or outline. It stays a component
+while you do that — you're switching variants, not editing shapes.
+
+**Break apart when you need to.** If no variant covers what you want, break the
+component and its pieces become editable primitives. One-way, on purpose.
+
+**⌘K searches everything.** Tools, actions, and every component and block, in
+one sheet. Enter drops it in the middle of your view.
+
+## Keyboard
+
+| | |
+|---|---|
+| `V` `R` `O` `P` `T` `A` | select, rectangle, ellipse, draw, text, arrow |
+| `C` / `B` | components / blocks panel |
+| `⌘K` | search everything |
+| `⌘Z` / `⇧⌘Z` | undo / redo |
+| `⌘D` | duplicate |
+| `[` / `]` | send to back / bring to front |
+| arrows (`⇧` for 10px) | nudge |
+| space-drag, middle-drag | pan |
+| `⌘`-scroll | zoom |
+
+## Running it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
+pnpm install
 pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## How it's put together
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Documents are a flat map of nodes on an infinite plane — no nesting, no flow
+layout. A node is a component instance, a shape, a freehand stroke, text, or
+an arrow.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Components never render to DOM. Each one is a `ComponentDef` whose `render()`
+returns an array of drawing primitives (`rect`, `line`, `text`, `icon`, …),
+which the canvas draws through [rough.js](https://roughjs.com) into SVG. That
+one indirection buys a lot: previews in the panel, ⌘K thumbnails, and
+break-apart all reuse the exact same primitives the canvas draws.
 
-## Learn More
+Icons are Phosphor paths, rendered crisp rather than roughened — at 14px the
+wobble just reads as mush.
 
-To learn more about Next.js, take a look at the following resources:
+To add a component, write a `ComponentDef` and add it to an array. See
+[`lib/library/AUTHORING.md`](lib/library/AUTHORING.md).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+app/                     the single page
+components/canvas/       canvas, interactions, rough.js renderer
+components/chrome/       rail, panels, inspector, ⌘K, menus
+lib/sketch/              drawing primitives + Phosphor icons
+lib/library/             every component and block definition
+lib/canvas/snap-engine   alignment/snapping math
+lib/store.ts             zustand doc state + history
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Stack
 
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Next.js, React, TypeScript, Tailwind, shadcn/ui for the tool's own chrome,
+rough.js for the sketch rendering, Phosphor for icons.

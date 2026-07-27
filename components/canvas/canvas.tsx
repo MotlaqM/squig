@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { nanoid } from "nanoid"
+
 import { useSquig } from "@/lib/store"
 import type { SquigNode, TextNode, ComponentNode } from "@/lib/types"
 import { screenToWorld } from "@/lib/types"
@@ -32,6 +32,7 @@ type Gesture =
 export function Canvas() {
   const containerRef = useRef<HTMLDivElement>(null)
   const gestureRef = useRef<Gesture | null>(null)
+  const gestureAbort = useRef<AbortController | null>(null)
   const nudgeCheckpointed = useRef(false)
 
   const nodes = useSquig((s) => s.nodes)
@@ -39,7 +40,7 @@ export function Canvas() {
   const selection = useSquig((s) => s.selection)
   const viewport = useSquig((s) => s.viewport)
   const tool = useSquig((s) => s.tool)
-  const shapeKind = useSquig((s) => s.shapeKind)
+
   const placing = useSquig((s) => s.placing)
   const editingId = useSquig((s) => s.editingId)
 
@@ -135,6 +136,8 @@ export function Canvas() {
     }
     if (g?.kind === "marquee") setMarquee(null)
     gestureRef.current = null
+    gestureAbort.current?.abort()
+    gestureAbort.current = null
     setGuides([])
     setLivePoints(null)
   }, [st])
@@ -283,19 +286,19 @@ export function Canvas() {
     [st, toLocal, toWorld, collectCandidates]
   )
 
-  const onPointerUp = useCallback(() => {
-    endGesture()
-    window.removeEventListener("pointermove", onPointerMove)
-    window.removeEventListener("pointerup", onPointerUp)
-  }, [endGesture, onPointerMove])
-
   const beginGesture = useCallback(
     (g: Gesture) => {
       gestureRef.current = g
-      window.addEventListener("pointermove", onPointerMove)
-      window.addEventListener("pointerup", onPointerUp)
+      // one controller per gesture: aborting removes both listeners at once, so
+      // a handler identity changing mid-drag can't strand a live listener
+      gestureAbort.current?.abort()
+      const ac = new AbortController()
+      gestureAbort.current = ac
+      window.addEventListener("pointermove", onPointerMove, { signal: ac.signal })
+      window.addEventListener("pointerup", endGesture, { signal: ac.signal })
+      window.addEventListener("pointercancel", endGesture, { signal: ac.signal })
     },
-    [onPointerMove, onPointerUp]
+    [onPointerMove, endGesture]
   )
 
   const startResize = useCallback(

@@ -6,7 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useMemo, useRef, useState } from "react"
-import { useSquig } from "@/lib/store"
+import { useSquig, type PanelKind } from "@/lib/store"
 import { groupDefs, searchDefs, type ComponentDef } from "@/lib/library/registry"
 import { SketchPrims } from "@/components/canvas/sketch"
 import { Input } from "@/components/ui/input"
@@ -44,29 +44,30 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
   )
 }
 
+/**
+ * Mounted only while a panel is chosen, and keyed by which one — switching
+ * tabs gets a fresh empty search box for free.
+ */
 export function LibraryPanel() {
   const panel = useSquig((s) => s.panel)
+  if (!panel) return null
+  return <Panel key={panel} panel={panel} />
+}
+
+function Panel({ panel }: { panel: Exclude<PanelKind, null> }) {
   const placing = useSquig((s) => s.placing)
   const st = useSquig.getState
   const [query, setQuery] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (panel) {
-      setQuery("")
-      requestAnimationFrame(() => inputRef.current?.focus())
-    }
-  }, [panel])
+    inputRef.current?.focus()
+  }, [])
 
-  const sections = useMemo(() => {
-    if (!panel) return []
-    return groupDefs(searchDefs(panel, query), panel)
-  }, [panel, query])
+  const sections = useMemo(() => groupDefs(searchDefs(panel, query), panel), [panel, query])
 
   const total = sections.reduce((n, s) => n + s.defs.length, 0)
   const first = sections[0]?.defs[0]
-
-  if (!panel) return null
 
   return (
     <div

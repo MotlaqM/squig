@@ -62,6 +62,18 @@ export function breakApart(node: ComponentNode): SquigNode[] {
         })
         break
       }
+      case "path": {
+        // icons have no primitive equivalent — rebuild them as Icon components
+        // so they survive the break instead of silently vanishing
+        if (!p.name) break
+        out.push({
+          id: nanoid(8), type: "component", kind: "icon",
+          props: { name: p.name, shape: "none" },
+          x: node.x + p.x, y: node.y + p.y, w: p.size, h: p.size,
+          seed: seed(),
+        })
+        break
+      }
       case "text": {
         const approxW = p.text.length * p.size * 0.46
         const x = p.align === "center" ? p.x - approxW / 2 : p.align === "right" ? p.x - approxW : p.x
