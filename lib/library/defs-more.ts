@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Prim, PrimOpts } from "@/lib/sketch/kit"
-import { rect, ellipse, line, poly, text, icon, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
+import { rect, pill, ellipse, line, poly, text, icon, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
 import type { ComponentDef, Props } from "./registry"
 
 const str = (p: Props, k: string, fallback = ""): string => String(p[k] ?? fallback)
@@ -169,8 +169,8 @@ export const fabDef: ComponentDef = {
     }
     const bw = w - 2
     const bh = h - 3
-    prims.push(ellipse(2, 3, bw, bh, { stroke: "faint" }))
-    prims.push(ellipse(0, 0, bw, bh, PAPER_FILL), ellipse(0, 0, bw, bh, INK_FILL))
+    prims.push(pill(2, 3, bw, bh, { stroke: "faint" }))
+    prims.push(pill(0, 0, bw, bh, PAPER_FILL), pill(0, 0, bw, bh, INK_FILL))
     const isz = clamp(bh * 0.42, 12, 22)
     const fs = clamp(bh * 0.34, 11, 16)
     const maxLabelW = bw - isz - 8 - 24
@@ -205,7 +205,7 @@ export const chipDef: ComponentDef = {
   render(p, w, h) {
     const avatar = bool(p, "avatar")
     const dismiss = bool(p, "dismiss")
-    const prims: Prim[] = [ellipse(0, 0, w, h)]
+    const prims: Prim[] = [pill(0, 0, w, h)]
     const fs = clamp(h * 0.42, 10, 14)
     let tx = clamp(h * 0.42, 10, 14)
     if (avatar) {
@@ -257,7 +257,7 @@ export const chipGroupDef: ComponentDef = {
         y += chipH + gap
       }
       if (y + chipH > h + 1) break
-      prims.push(ellipse(x, y, cw, chipH))
+      prims.push(pill(x, y, cw, chipH))
       prims.push(text(x + 12, mid(y, chipH, fs), label, fs))
       if (dismiss) prims.push(...icon("x", x + cw - 11, y + chipH / 2, 9, { stroke: "muted" }))
       x += cw + gap
@@ -337,9 +337,9 @@ export const searchInputDef: ComponentDef = {
     { key: "kbd", label: "Kbd hint", type: "toggle", quick: true },
   ],
   render(p, w, h) {
-    const pill = str(p, "shape", "rounded") === "pill"
-    const prims: Prim[] = [pill ? ellipse(0, 0, w, h) : rect(0, 0, w, h)]
-    const padX = pill ? clamp(h * 0.34, 10, 18) : 12
+    const rounded = str(p, "shape", "rounded") === "pill"
+    const prims: Prim[] = [rounded ? pill(0, 0, w, h) : rect(0, 0, w, h)]
+    const padX = rounded ? clamp(h * 0.34, 10, 18) : 12
     const isz = clamp(h * 0.42, 11, 17)
     prims.push(...icon("magnifying-glass", padX + isz / 2, h / 2, isz, { stroke: "muted" }))
     let right = w - padX
@@ -1206,7 +1206,7 @@ export const listItemDef: ComponentDef = {
     } else if (trailing === "badge") {
       const bw = 44
       const bh = 20
-      prims.push(ellipse(right - bw, (h - bh) / 2, bw, bh))
+      prims.push(pill(right - bw, (h - bh) / 2, bw, bh))
       prims.push(text(right - bw / 2, h / 2 + 4, "New", 11, { align: "center" }))
       right -= bw + 10
     } else if (trailing === "button") {
@@ -1603,7 +1603,7 @@ export const cardMediaDef: ComponentDef = {
     if (bool(p, "badge") && imgH > 40) {
       const bw = 56
       const bh = 20
-      prims.push(ellipse(pad, pad, bw, bh, PAPER_FILL), ellipse(pad, pad, bw, bh))
+      prims.push(pill(pad, pad, bw, bh, PAPER_FILL), pill(pad, pad, bw, bh))
       prims.push(text(pad + bw / 2, pad + bh / 2 + 4, "Travel", 10, { align: "center" }))
     }
     const meta = bool(p, "meta")
@@ -1654,7 +1654,7 @@ export const cardPricingDef: ComponentDef = {
     if (popular && w > 150) {
       const bw = 58
       const bh = 20
-      prims.push(ellipse(w - pad - bw, y - 14, bw, bh, FAINT_FILL))
+      prims.push(pill(w - pad - bw, y - 14, bw, bh, FAINT_FILL))
       prims.push(text(w - pad - bw / 2, y + 1, "Popular", 10, { align: "center", color: "muted" }))
     }
     const ps = clamp(w * 0.16, 20, 40)
@@ -1756,7 +1756,7 @@ export const cardProductDef: ComponentDef = {
     if (bool(p, "badge") && imgH > 40) {
       const bw = 46
       const bh = 20
-      prims.push(ellipse(pad, pad, bw, bh, PAPER_FILL), ellipse(pad, pad, bw, bh))
+      prims.push(pill(pad, pad, bw, bh, PAPER_FILL), pill(pad, pad, bw, bh))
       prims.push(text(pad + bw / 2, pad + bh / 2 + 4, "Sale", 10, { align: "center" }))
     }
     let y = imgH + pad + 12
@@ -1810,7 +1810,7 @@ export const cardBlogDef: ComponentDef = {
     let y = imgH + pad + 8
     const tw = Math.min(w - pad * 2, advance(str(p, "tag", "Design"), 10) + 18)
     const tag = truncate(str(p, "tag", "Design"), 10, Math.max(6, tw - 14))
-    prims.push(ellipse(pad, y - 13, tw, 20, { stroke: "muted" }))
+    prims.push(pill(pad, y - 13, tw, 20, { stroke: "muted" }))
     prims.push(text(pad + tw / 2, y + 1, tag, 10, { align: "center", color: "muted" }))
     y += 24
     const ts = clamp(w * 0.07, 13, 18)
@@ -2073,8 +2073,8 @@ export const navTabsPillDef: ComponentDef = {
       const x = pad + i * tabW
       if (i === active) {
         const ph = h - pad * 2 - 4
-        prims.push(ellipse(x + 2, pad + 2, tabW - 4, ph, PAPER_FILL))
-        prims.push(ellipse(x + 2, pad + 2, tabW - 4, ph))
+        prims.push(pill(x + 2, pad + 2, tabW - 4, ph, PAPER_FILL))
+        prims.push(pill(x + 2, pad + 2, tabW - 4, ph))
       }
       prims.push(
         text(x + tabW / 2, mid(0, h, fs), truncate(pick(labels, i), fs, tabW - 14), fs, {
@@ -2121,7 +2121,7 @@ export const bottomNavDef: ComponentDef = {
       const cx = i * colW + colW / 2
       if (i === active) {
         const pw = Math.min(colW - 10, isz * 2.1)
-        prims.push(ellipse(cx - pw / 2, iconY - isz * 0.78, pw, isz * 1.56, FAINT_FILL))
+        prims.push(pill(cx - pw / 2, iconY - isz * 0.78, pw, isz * 1.56, FAINT_FILL))
       }
       prims.push(...icon(pick(icons, i), cx, iconY, isz, { stroke: i === active ? "ink" : "muted" }))
       if (showLabels) {
@@ -2316,7 +2316,7 @@ export const dataTableDef: ComponentDef = {
       const sbh = Math.min(rowH - 12, 20)
       const sbw = Math.min(contentW * 0.24, 62)
       if (sbh > 12 && sbw > 34) {
-        prims.push(ellipse(colX[1], rcy - sbh / 2, sbw, sbh, { stroke: "muted" }))
+        prims.push(pill(colX[1], rcy - sbh / 2, sbw, sbh, { stroke: "muted" }))
         prims.push(text(colX[1] + sbw / 2, rcy + 4, pick(statuses, r), 10, { align: "center", color: "muted" }))
       }
       prims.push(text(cbW + contentW - 6, rcy + 4, pick(amounts, r), 12, { align: "right" }))

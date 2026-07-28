@@ -36,9 +36,10 @@ that matter, never a `text` control.
 ## The drawing DSL — `@/lib/sketch/kit`
 
 ```ts
-import { rect, ellipse, line, poly, text, icon, place, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
+import { rect, pill, ellipse, line, poly, text, icon, place, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
 
 rect(x, y, w, h, opts?)                 // opts.r for corner radius
+pill(x, y, w, h, opts?)                 // rect with fully rounded ends
 ellipse(x, y, w, h, opts?)              // x,y = top-left of bounding box
 line(x1, y1, x2, y2, opts?)
 poly([[x,y], ...], close?, opts?)
@@ -80,7 +81,12 @@ The look is **refined hand-drawn** — closer to FigJam/tldraw than to a napkin.
   `loremLines` / plain `line` for body copy and filler — a wireframe shouldn't
   pretend to have final copy.
 - Comfortable padding: 12–20px inside containers, 8–14px between rows.
-- Corner radius: `{ r: 6 }` on cards/panels/buttons, `{ r: 999 }` for pills.
+- Corner radius: `{ r: 6 }` on cards/panels/buttons.
+- **Anything pill-shaped is `pill()`, never `ellipse()`** — chips, badges, tags,
+  status pills, pill tabs, segment indicators. An ellipse bows the top and
+  bottom edges inward, which squeezes the label and reads as a balloon. Keep
+  `ellipse()` for things that are actually round: avatars, radio marks, status
+  dots, chart points, icon bubbles.
 
 ## Composition
 

@@ -61,6 +61,20 @@ export type Prim =
 // -- constructors -----------------------------------------------------------
 
 export const rect = (x: number, y: number, w: number, h: number, o?: PrimOpts): Prim => ({ t: "rect", x, y, w, h, o })
+/**
+ * A pill: a rectangle with fully rounded ends. Chips, badges, tags and tabs
+ * are all this shape — never an ellipse, which bows the top and bottom edges
+ * inward and squeezes the label.
+ */
+export const pill = (x: number, y: number, w: number, h: number, o?: PrimOpts): Prim => ({
+  t: "rect",
+  x,
+  y,
+  w,
+  h,
+  r: Math.min(w, h) / 2,
+  o,
+})
 export const ellipse = (x: number, y: number, w: number, h: number, o?: PrimOpts): Prim => ({ t: "ellipse", x, y, w, h, o })
 export const line = (x1: number, y1: number, x2: number, y2: number, o?: PrimOpts): Prim => ({ t: "line", x1, y1, x2, y2, o })
 export const poly = (pts: [number, number][], close?: boolean, o?: PrimOpts): Prim => ({ t: "poly", pts, close, o })

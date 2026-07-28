@@ -5,7 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Prim } from "@/lib/sketch/kit"
-import { rect, ellipse, line, poly, text, icon, place, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
+import { rect, pill, ellipse, line, poly, text, icon, place, loremLines, truncate, textWidth } from "@/lib/sketch/kit"
 import type { ComponentDef, Props } from "./registry"
 import {
   buttonDef,
@@ -1190,7 +1190,7 @@ export const aiInputDef: ComponentDef = {
     const model = truncate(str(p, "model", "Squig 4.5"), 12, w * 0.34)
     const chipW = textWidth(model, 12) + 52
     if (x + chipW < w - 60) {
-      prims.push(ellipse(x, cy - chipH / 2, chipW, chipH, { stroke: "muted" }))
+      prims.push(pill(x, cy - chipH / 2, chipW, chipH, { stroke: "muted" }))
       prims.push(...icon("sparkle", x + 17, cy, 13, { stroke: "muted" }))
       prims.push(text(x + 30, cy + 4, model, 12))
       prims.push(...icon("caret-down", x + chipW - 14, cy, 10, { stroke: "muted" }))
@@ -1304,7 +1304,7 @@ export const aiPromptSuggestionsDef: ComponentDef = {
           y += ph + gap
         }
         if (y + ph > h) break
-        prims.push(ellipse(x, y, pw, ph, { stroke: "muted" }))
+        prims.push(pill(x, y, pw, ph, { stroke: "muted" }))
         prims.push(...icon(names[i], x + 20, y + ph / 2, 14, { stroke: "muted" }))
         prims.push(text(x + 34, y + ph / 2 + 4, label, 13))
         x += pw + gap
@@ -1743,7 +1743,7 @@ export const productDetailDef: ComponentDef = {
         const ow = 52
         const ox = x + i * (ow + 10)
         if (ox + ow > x + rw) return
-        prims.push(ellipse(ox, y + 10, ow, 30, i === 1 ? { fill: "hachure", fillColor: "ink" } : { stroke: "muted" }))
+        prims.push(pill(ox, y + 10, ow, 30, i === 1 ? { fill: "hachure", fillColor: "ink" } : { stroke: "muted" }))
         prims.push(text(ox + ow / 2, y + 30, o, 13, { align: "center" }))
       })
       y += 54

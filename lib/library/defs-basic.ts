@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Prim } from "@/lib/sketch/kit"
-import { rect, ellipse, line, text, icon, truncate, textWidth } from "@/lib/sketch/kit"
+import { rect, pill, ellipse, line, text, icon, truncate, textWidth } from "@/lib/sketch/kit"
 import type { ComponentDef, Props } from "./registry"
 
 const str = (p: Props, k: string, fallback = ""): string => String(p[k] ?? fallback)
@@ -75,8 +75,8 @@ export const badgeDef: ComponentDef = {
   render(p, w, h) {
     const prims: Prim[] = [
       str(p, "variant") === "filled"
-        ? ellipse(0, 0, w, h, { fill: "hachure", fillColor: "ink" })
-        : ellipse(0, 0, w, h),
+        ? pill(0, 0, w, h, { fill: "hachure", fillColor: "ink" })
+        : pill(0, 0, w, h),
     ]
     prims.push(text(w / 2, h / 2 + 4, truncate(str(p, "label", "New"), 12, w - 12), 12, { align: "center" }))
     return prims
