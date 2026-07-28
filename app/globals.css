@@ -49,6 +49,19 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* squig canvas theme — overwritten at runtime by lib/theme.ts.
+   These defaults are Internet blue, so first paint matches. */
+:root {
+  --sq-bg: #edeae0;
+  --sq-paper: #faf8f2;
+  --sq-ink: #2338d4;
+  --sq-muted: #7a88e4;
+  --sq-faint: #bfc8f1;
+  --sq-grid: #d5cfc0;
+  --sq-select: #e8622f;
+  --sq-font: var(--font-sketch);
+}
+
 :root {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);

@@ -327,7 +327,7 @@ export const emptyStateDef: ComponentDef = {
   render(p, w, h) {
     const prims: Prim[] = [rect(0, 0, w, h, { stroke: "faint", dashed: true })]
     const cy = h * 0.34
-    prims.push(ellipse(w / 2 - 44, cy - 44, 88, 88, { stroke: "faint" }))
+    prims.push(ellipse(w / 2 - 44, cy - 44, 88, 88, { stroke: "faint", fill: "hachure", fillColor: "faint", texture: "halftone" }))
     prims.push(...icon(str(p, "icon", "image") as "image", w / 2, cy, 40, { stroke: "muted" }))
     prims.push(text(w / 2, cy + 76, str(p, "title", "Nothing here yet"), 19, { align: "center", bold: true }))
     prims.push(line(w / 2 - w * 0.28, cy + 96, w / 2 + w * 0.28, cy + 96, { stroke: "muted", strokeWidth: 1.2 }))

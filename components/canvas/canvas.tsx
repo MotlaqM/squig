@@ -540,8 +540,8 @@ export function Canvas() {
       className="absolute inset-0 overflow-hidden touch-none select-none"
       style={{
         cursor: cursorStyle,
-        backgroundColor: "#faf9f6",
-        backgroundImage: "radial-gradient(circle, #d9d4ca 1px, transparent 1px)",
+        backgroundColor: "var(--sq-bg)",
+        backgroundImage: "radial-gradient(circle, var(--sq-grid) 1px, transparent 1px)",
         backgroundSize: `${24 * v.zoom}px ${24 * v.zoom}px`,
         backgroundPosition: `${v.x}px ${v.y}px`,
       }}
@@ -576,7 +576,7 @@ export function Canvas() {
             <polyline
               points={livePoints.map((p) => p.join(",")).join(" ")}
               fill="none"
-              stroke="#2d2a26"
+              stroke="var(--sq-ink)"
               strokeWidth={2 / v.zoom < 2 ? 2 : 2 / v.zoom}
               strokeLinecap="round"
               strokeLinejoin="round"
@@ -610,9 +610,9 @@ export function Canvas() {
         <svg className="pointer-events-none absolute inset-0 h-full w-full">
           {guides.map((g, i) =>
             g.axis === "x" ? (
-              <line key={i} x1={g.position} y1={g.start} x2={g.position} y2={g.end} stroke="#e0653a" strokeWidth={1} />
+              <line key={i} x1={g.position} y1={g.start} x2={g.position} y2={g.end} stroke="var(--sq-select)" strokeWidth={1} />
             ) : (
-              <line key={i} x1={g.start} y1={g.position} x2={g.end} y2={g.position} stroke="#e0653a" strokeWidth={1} />
+              <line key={i} x1={g.start} y1={g.position} x2={g.end} y2={g.position} stroke="var(--sq-select)" strokeWidth={1} />
             )
           )}
         </svg>
@@ -627,8 +627,8 @@ export function Canvas() {
             top: Math.min(marquee.y1, marquee.y2),
             width: Math.abs(marquee.x2 - marquee.x1),
             height: Math.abs(marquee.y2 - marquee.y1),
-            borderColor: "#e0653a",
-            backgroundColor: "rgba(224, 101, 58, 0.05)",
+            borderColor: "var(--sq-select)",
+            backgroundColor: "color-mix(in srgb, var(--sq-select) 8%, transparent)",
           }}
         />
       )}
@@ -642,7 +642,7 @@ export function Canvas() {
       {/* empty-canvas nudge */}
       {order.length === 0 && !placing && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-          <p className="font-sketch max-w-xs -rotate-2 text-center text-xl" style={{ color: "#b9b3a9" }}>
+          <p className="max-w-xs -rotate-2 text-center text-xl" style={{ color: "var(--sq-muted)", fontFamily: "var(--sq-font)" }}>
             draw something ugly.
             <br />
             that&apos;s the point.
@@ -692,7 +692,7 @@ function SelectionOverlay({
     <div className="pointer-events-none absolute" style={{ left, top, width: w, height: h }}>
       <div
         className="absolute inset-0 rounded-sm"
-        style={{ border: "1.5px solid #e0653a", boxShadow: "0 0 0 1px rgba(224,101,58,0.15)" }}
+        style={{ border: "1.5px solid var(--sq-select)" }}
       />
       {resizable &&
         one &&
@@ -702,7 +702,7 @@ function SelectionOverlay({
             <div
               key={hd}
               className="pointer-events-auto absolute h-2.5 w-2.5 rounded-[3px] bg-white"
-              style={{ left: pos.left, top: pos.top, cursor: pos.cursor, border: "1.5px solid #e0653a" }}
+              style={{ left: pos.left, top: pos.top, cursor: pos.cursor, border: "1.5px solid var(--sq-select)" }}
               onPointerDown={(e) => onStartResize(hd, one.id, e)}
             />
           )
@@ -777,17 +777,18 @@ function TextEditOverlay() {
           commit()
         }
       }}
-      className="font-sketch absolute resize-none overflow-hidden rounded-md px-2 py-1 outline-none"
+      className="absolute resize-none overflow-hidden rounded-md px-2 py-1 outline-none"
       style={{
         left: node.x * v.zoom + v.x - 8,
         top: node.y * v.zoom + v.y - 6,
         minWidth: Math.max(node.w * v.zoom + 16, 140),
         height: Math.max(node.h * v.zoom + 12, fontSize * 1.8),
         fontSize,
+        fontFamily: "var(--sq-font)",
         lineHeight: 1.35,
-        color: "#2d2a26",
+        color: "var(--sq-ink)",
         background: "rgba(255,255,255,0.92)",
-        border: "1.5px dashed #e0653a",
+        border: "1.5px dashed var(--sq-select)",
       }}
       placeholder={isText ? "say something" : "label"}
     />

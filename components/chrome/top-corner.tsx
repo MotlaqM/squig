@@ -15,12 +15,29 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuShortcut,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { THEMES, THEME_NAMES, type ThemeName } from "@/lib/theme"
+
+/** Two-tone chip showing a palette's paper and ink. */
+function Swatch({ name }: { name: ThemeName }) {
+  const p = THEMES[name]
+  return (
+    <span
+      className="inline-block size-3.5 shrink-0 rounded-full border"
+      style={{ background: `linear-gradient(135deg, ${p.paper} 50%, ${p.ink} 50%)`, borderColor: p.ink }}
+    />
+  )
+}
 
 export function TopCorner() {
   const fileName = useSquig((s) => s.fileName)
   const contextRow = useSquig((s) => s.contextRow)
+  const theme = useSquig((s) => s.theme)
+  const font = useSquig((s) => s.font)
   const st = useSquig.getState
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(fileName)
@@ -42,7 +59,10 @@ export function TopCorner() {
             className="flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-accent"
             title="file menu"
           >
-            <span className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none">
+            <span
+              className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none"
+              style={{ color: "var(--sq-ink)" }}
+            >
               squig
             </span>
             <CaretDownIcon className="size-3 text-muted-foreground" weight="bold" />
@@ -78,6 +98,28 @@ export function TopCorner() {
             <DropdownMenuShortcut>⇧⌘Z</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex items-center gap-2">
+                <Swatch name={theme} />
+                Ink
+              </span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-48">
+              {THEME_NAMES.map((name) => (
+                <DropdownMenuItem key={name} onSelect={() => st().setTheme(name)}>
+                  <span className="flex items-center gap-2">
+                    <Swatch name={name} />
+                    {THEMES[name].label}
+                  </span>
+                  {theme === name && <DropdownMenuShortcut>✓</DropdownMenuShortcut>}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+          <DropdownMenuItem onSelect={() => st().setFont(font === "hand" ? "clean" : "hand")}>
+            {font === "hand" ? "Use clean lettering" : "Use hand lettering"}
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => st().setContextRow(!contextRow)}>
             {contextRow ? "Hide context row" : "Show context row"}
           </DropdownMenuItem>

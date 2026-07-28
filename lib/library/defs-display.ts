@@ -34,7 +34,7 @@ export const cardDef: ComponentDef = {
     let y = 0
     if (bool(p, "image")) {
       const imgH = Math.min(h * 0.4, 110)
-      prims.push(rect(0, 0, w, imgH, { stroke: "faint" }))
+      prims.push(rect(0, 0, w, imgH, { stroke: "faint", fill: "hachure", fillColor: "faint", texture: "diagonal" }))
       prims.push(...icon("image", w / 2, imgH / 2, Math.min(imgH, 44), { stroke: "muted" }))
       y = imgH
     }
@@ -75,7 +75,7 @@ export const imageDef: ComponentDef = {
   render(p, w, h) {
     const capH = bool(p, "caption") ? 22 : 0
     const ih = h - capH
-    const prims: Prim[] = [rect(0, 0, w, ih)]
+    const prims: Prim[] = [rect(0, 0, w, ih, { fill: "hachure", fillColor: "faint", texture: "diagonal" })]
     if (str(p, "style") === "crossed") {
       prims.push(line(0, 0, w, ih, { stroke: "faint" }), line(w, 0, 0, ih, { stroke: "faint" }))
     } else {
@@ -236,7 +236,7 @@ export const dialogDef: ComponentDef = {
   ],
   render(p, w, h) {
     const prims: Prim[] = [
-      rect(0, 0, w, h, { fill: "solid", fillColor: "paper" }),
+      rect(0, 0, w, h, { fill: "solid", fillColor: "paper", shadow: true }),
       rect(0, 0, w, h),
     ]
     prims.push(text(20, 36, truncate(str(p, "title", "Are you sure?"), 18, w - 60), 18, { bold: true }))
@@ -271,7 +271,7 @@ export const dropdownDef: ComponentDef = {
     const icons = bool(p, "icons")
     const iconNames = ["user", "gear", "mail", "arrow-right", "star", "trash"] as const
     const rowH = h / Math.max(1, items.length)
-    const prims: Prim[] = [rect(0, 0, w, h, { fill: "solid", fillColor: "paper" }), rect(0, 0, w, h)]
+    const prims: Prim[] = [rect(0, 0, w, h, { fill: "solid", fillColor: "paper", shadow: true }), rect(0, 0, w, h)]
     items.forEach((item, i) => {
       const cy = i * rowH + rowH / 2
       let tx = 14
@@ -302,7 +302,7 @@ export const toastDef: ComponentDef = {
     { key: "action", label: "Action", type: "toggle", quick: true },
   ],
   render(p, w, h) {
-    const prims: Prim[] = [rect(0, 0, w, h, { fill: "solid", fillColor: "paper" }), rect(0, 0, w, h)]
+    const prims: Prim[] = [rect(0, 0, w, h, { fill: "solid", fillColor: "paper", shadow: true }), rect(0, 0, w, h)]
     prims.push(...icon("check", 22, h / 2, 16))
     const hasDesc = bool(p, "description")
     const ty = hasDesc ? h / 2 - 6 : h / 2 + 5
@@ -470,7 +470,7 @@ export const chartDef: ComponentDef = {
       const heights = [0.5, 0.8, 0.35, 0.65, 0.95]
       for (let i = 0; i < n; i++) {
         const bh = (ch - 30) * heights[i]
-        prims.push(rect(18 + i * (bw + 10), top + ch - 14 - bh, bw, bh, { fill: "hachure", fillColor: "ink" }))
+        prims.push(rect(18 + i * (bw + 10), top + ch - 14 - bh, bw, bh, { fill: "hachure", fillColor: "ink", texture: "halftone" }))
       }
     } else {
       const pts: [number, number][] = [0.7, 0.45, 0.6, 0.3, 0.5, 0.15].map((v, i, arr) => [

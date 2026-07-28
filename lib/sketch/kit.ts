@@ -6,23 +6,38 @@
 
 export type InkColor = "ink" | "muted" | "faint" | "paper" | "accent"
 
+/**
+ * Colours resolve through CSS custom properties, so switching theme restyles
+ * every node without regenerating a single path. See lib/theme.ts.
+ */
 export const INK: Record<InkColor, string> = {
-  ink: "#2d2a26",
-  muted: "#8a857d",
-  faint: "#c9c4bb",
-  paper: "#fdfcfa",
-  accent: "#2d2a26",
+  ink: "var(--sq-ink)",
+  muted: "var(--sq-muted)",
+  faint: "var(--sq-faint)",
+  paper: "var(--sq-paper)",
+  accent: "var(--sq-ink)",
 }
+
+/** Printed textures, in place of a flat tint. */
+export type Texture = "halftone" | "checker" | "dither" | "diagonal" | "grid" | "cross"
 
 export interface PrimOpts {
   stroke?: InkColor
   strokeWidth?: number
+  /**
+   * "hachure" is the emphasis fill — it renders as a printed texture.
+   * "solid" is genuinely opaque (menus, popovers, knobs).
+   */
   fill?: "none" | "hachure" | "solid"
   fillColor?: InkColor
+  /** which texture an emphasis fill uses; defaults to halftone */
+  texture?: Texture
   roughness?: number
   dashed?: boolean
   /** corner radius — rects only; `rect(x, y, w, h, { r: 6 })` */
   r?: number
+  /** offset block shadow behind the shape, early-desktop style */
+  shadow?: boolean
 }
 
 export type Prim =

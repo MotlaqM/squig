@@ -3,6 +3,7 @@
 import { useEffect } from "react"
 import { useSquig } from "@/lib/store"
 import { Canvas } from "@/components/canvas/canvas"
+import { SketchDefs } from "@/components/canvas/sketch-defs"
 import { LeftRail } from "@/components/chrome/left-rail"
 import { LibraryPanel } from "@/components/chrome/library-panel"
 import { Inspector } from "@/components/chrome/inspector"
@@ -20,8 +21,8 @@ export default function Home() {
 
   if (!hydrated) {
     return (
-      <main className="flex h-full items-center justify-center" style={{ backgroundColor: "#faf9f6" }}>
-        <p className="font-sketch text-xl" style={{ color: "#b9b3a9" }}>
+      <main className="flex h-full items-center justify-center" style={{ backgroundColor: "var(--sq-bg)" }}>
+        <p className="text-xl" style={{ color: "var(--sq-muted)", fontFamily: "var(--sq-font)" }}>
           warming up the pencils…
         </p>
       </main>
@@ -30,6 +31,7 @@ export default function Home() {
 
   return (
     <main className="relative h-full">
+      <SketchDefs />
       <Canvas />
       <TopCorner />
       <LeftRail />

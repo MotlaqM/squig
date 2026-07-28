@@ -5,6 +5,7 @@ import { nanoid } from "nanoid"
 import type { SquigNode, Tool, Viewport, ShapeKind } from "./types"
 import { screenToWorld } from "./types"
 import { getDef } from "./library/registry"
+import { applyTheme, DEFAULT_FONT, DEFAULT_THEME, type FontMode, type ThemeName } from "./theme"
 
 // ---------------------------------------------------------------------------
 // Store — flat node map + z-order, selection, viewport, tool, history.
@@ -37,6 +38,8 @@ interface SquigState {
   placing: string | null
   editingId: string | null
   contextRow: boolean
+  theme: ThemeName
+  font: FontMode
   hydrated: boolean
   commandOpen: boolean
   contextMenu: ContextMenuState | null
@@ -51,6 +54,8 @@ interface SquigState {
   setPlacing: (kind: string | null) => void
   setEditing: (id: string | null) => void
   setContextRow: (on: boolean) => void
+  setTheme: (t: ThemeName) => void
+  setFont: (f: FontMode) => void
   setViewport: (v: Viewport) => void
   setSelection: (ids: string[]) => void
   setCommandOpen: (open: boolean) => void
@@ -91,9 +96,9 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 function scheduleSave(get: () => SquigState) {
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => {
-    const { fileName, nodes, order, contextRow } = get()
+    const { fileName, nodes, order, contextRow, theme, font } = get()
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ fileName, nodes, order, contextRow }))
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ fileName, nodes, order, contextRow, theme, font }))
     } catch {
       // storage full or unavailable — squig shrugs
     }
@@ -112,6 +117,8 @@ export const useSquig = create<SquigState>((set, get) => ({
   placing: null,
   editingId: null,
   contextRow: false,
+  theme: DEFAULT_THEME,
+  font: DEFAULT_FONT,
   hydrated: false,
   commandOpen: false,
   contextMenu: null,
@@ -129,6 +136,16 @@ export const useSquig = create<SquigState>((set, get) => ({
   setEditing: (id) => set({ editingId: id }),
   setContextRow: (on) => {
     set({ contextRow: on })
+    scheduleSave(get)
+  },
+  setTheme: (t) => {
+    set({ theme: t })
+    applyTheme(t, get().font)
+    scheduleSave(get)
+  },
+  setFont: (f) => {
+    set({ font: f })
+    applyTheme(get().theme, f)
     scheduleSave(get)
   },
   setViewport: (v) => set({ viewport: v }),
@@ -279,18 +296,24 @@ export const useSquig = create<SquigState>((set, get) => ({
       const raw = localStorage.getItem(STORAGE_KEY)
       if (raw) {
         const doc = JSON.parse(raw)
+        const theme: ThemeName = doc.theme ?? DEFAULT_THEME
+        const font: FontMode = doc.font ?? DEFAULT_FONT
         set({
           fileName: doc.fileName ?? "untitled scribbles",
           nodes: doc.nodes ?? {},
           order: doc.order ?? [],
           contextRow: doc.contextRow ?? false,
+          theme,
+          font,
           hydrated: true,
         })
+        applyTheme(theme, font)
         return
       }
     } catch {
       // corrupted doc — start fresh
     }
+    applyTheme(get().theme, get().font)
     set({ hydrated: true })
   },
 

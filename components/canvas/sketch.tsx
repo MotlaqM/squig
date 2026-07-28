@@ -1,45 +1,70 @@
 "use client"
 
 // ---------------------------------------------------------------------------
-// Sketch renderers — turn prims / nodes into rough.js SVG paths.
+// Sketch renderers — turn prims / nodes into SVG paths.
 //
-// Tuning note: this is deliberately *restrained* hand-drawn. The target is
-// FigJam/tldraw — enough irregularity to read as "not decided yet", not so
-// much that it reads as a napkin. Low roughness, low bowing, single stroke,
-// rounded corners, soft hatching. Icons stay crisp.
+// The look is early-web risograph: one saturated ink on warm paper, confident
+// closed lines, and printed textures (halftone, checker, dither) carrying the
+// analog feel. Irregularity is deliberately small — a line should read as
+// drawn, not as a napkin, and corners must actually meet. Icons stay crisp.
 // ---------------------------------------------------------------------------
 
 import { memo, useMemo } from "react"
 import rough from "roughjs"
 import type { Options } from "roughjs/bin/core"
 import type { RoughGenerator } from "roughjs/bin/generator"
-import { INK, type Prim } from "@/lib/sketch/kit"
+import { INK, type Prim, type PrimOpts } from "@/lib/sketch/kit"
 import type { SquigNode } from "@/lib/types"
 import { renderComponent } from "@/lib/library/registry"
+import { textureUrl, type ToneName } from "./sketch-defs"
 
 const gen: RoughGenerator = rough.generator()
 
-/** House defaults. Nudge these to retune the whole app's hand. */
+/**
+ * House defaults.
+ *
+ * The hand is deliberately restrained: enough irregularity that a line reads
+ * as drawn rather than generated, but not so much that corners fall open.
+ * `preserveVertices` pins every endpoint to its exact coordinate, so closed
+ * shapes actually close — the wobble lives in the middle of each segment.
+ * The analog character comes from the printed fill textures, not the stroke.
+ */
 const HAND = {
-  roughness: 0.5,
-  bowing: 0.6,
-  strokeWidth: 1.25,
+  roughness: 0.25,
+  bowing: 0.35,
+  strokeWidth: 1.4,
   /** default corner rounding for rects that don't ask for one */
   radius: 3,
 }
 
+/** How far the early-desktop block shadow sits behind a surface. */
+const SHADOW_OFFSET = 4
+
 /**
- * Filled surfaces read as soft grey washes, not scribbled-in boxes. Diagonal
- * hatching is the single loudest thing rough.js does, and on a canvas full of
- * buttons it turns the whole page into static — so "hachure" resolves to a
- * flat tint here. `fill: "solid"` still means genuinely opaque (menus, popovers).
+ * An emphasis fill prints one step lighter than the ink it was asked for.
+ * Defs say `fillColor: "ink"` to mean "this surface is emphasised", but a
+ * full-strength fill swallows any label sitting on it — so emphasis reads
+ * through tone, and the text keeps the darkest ink to itself.
  */
-const WASH: Record<string, string> = {
-  ink: "#e4e0d8",
-  muted: "#eeebe5",
-  faint: "#f4f2ee",
-  paper: "#fdfcfa",
-  accent: "#e4e0d8",
+const EMPHASIS_TONE: Record<string, ToneName> = {
+  ink: "faint",
+  accent: "faint",
+  muted: "faint",
+  faint: "faint",
+  paper: "faint",
+}
+
+/**
+ * Controls get flat colour; texture is reserved for decorative areas — image
+ * placeholders, empty states, chart fills. Halftone behind a button label
+ * just makes the label hard to read, and a page where every surface is
+ * screened reads as noise rather than as print.
+ */
+function fillPaint(o: PrimOpts): string {
+  const tone = o.fillColor ?? "faint"
+  if (o.fill === "solid") return INK[tone]
+  const emphasis = EMPHASIS_TONE[tone] ?? "faint"
+  return o.texture ? textureUrl(o.texture, tone === "faint" ? "muted" : emphasis) : INK[emphasis]
 }
 
 function primOptions(p: Prim, seed: number): Options {
@@ -57,9 +82,16 @@ function primOptions(p: Prim, seed: number): Options {
   }
   if (o?.fill && o.fill !== "none") {
     opts.fillStyle = "solid"
-    opts.fill = o.fill === "hachure" ? WASH[o.fillColor ?? "faint"] : INK[o.fillColor ?? "faint"]
+    opts.fill = fillPaint(o)
   }
   return opts
+}
+
+/** Plain ellipse as path data, for shadows that skip rough.js entirely. */
+function ellipsePath(cx: number, cy: number, w: number, h: number): string {
+  const rx = w / 2
+  const ry = h / 2
+  return `M${cx - rx} ${cy} a${rx} ${ry} 0 1 0 ${w} 0 a${rx} ${ry} 0 1 0 ${-w} 0 Z`
 }
 
 /** Rounded-rect as SVG path data — rough.js has no radius of its own. */
@@ -120,6 +152,23 @@ export function primsToPaths(
     const s = ((seed + i * 7919) % 2 ** 31) || 1
     const dash = "o" in p && p.o?.dashed ? "6 4" : undefined
     try {
+      // block shadow first, so the surface prints over it
+      if ("o" in p && p.o?.shadow && (p.t === "rect" || p.t === "ellipse")) {
+        const d =
+          p.t === "rect"
+            ? roundRectPath(p.x + SHADOW_OFFSET, p.y + SHADOW_OFFSET, p.w, p.h, p.r ?? p.o?.r ?? HAND.radius)
+            : null
+        if (d) {
+          paths.push({ d, stroke: "none", strokeWidth: 0, fill: INK.faint })
+        } else {
+          paths.push({
+            d: ellipsePath(p.x + SHADOW_OFFSET + p.w / 2, p.y + SHADOW_OFFSET + p.h / 2, p.w, p.h),
+            stroke: "none",
+            strokeWidth: 0,
+            fill: INK.faint,
+          })
+        }
+      }
       switch (p.t) {
         case "rect": {
           const r = p.r ?? p.o?.r ?? HAND.radius
@@ -195,7 +244,7 @@ export const SketchPrims = memo(function SketchPrims({ prims, seed }: { prims: P
           x={t.x}
           y={t.y}
           fontSize={t.size}
-          fontFamily="var(--font-sketch)"
+          fontFamily="var(--sq-font)"
           fontWeight={t.bold ? 700 : 400}
           fill={INK[t.color ?? "ink"]}
           textAnchor={t.align === "center" ? "middle" : t.align === "right" ? "end" : "start"}
