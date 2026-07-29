@@ -869,6 +869,10 @@ export function Canvas() {
         return
       }
       if (tool === "text") {
+        // the editor mounts and focuses inside this handler, so the compat
+        // mousedown that follows would hand focus straight back to the canvas —
+        // blurring the editor into a commit that deletes the still-empty node
+        e.preventDefault()
         const id = s.addNode({
           type: "text",
           text: "",
