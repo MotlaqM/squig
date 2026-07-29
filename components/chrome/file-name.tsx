@@ -2,15 +2,20 @@
 
 // ---------------------------------------------------------------------------
 // The file name floats at the top center of the canvas. It ducks out of the
-// way while the pointer is moving so it never sits between the user and what
-// they're drawing, and drifts back once the hand comes to rest.
+// way while a layer is being moved, resized, drawn or dragged in from the
+// library, so the name never sits between the user and the thing under their
+// hand — and it drifts back the moment they let go.
+//
+// Only hands-on-the-geometry counts. Panning, marquee-selecting and plain
+// mousing around leave every layer where it is, and a label that flickered at
+// each of those would be its own kind of noise.
 // ---------------------------------------------------------------------------
 
 import { useEffect, useRef, useState } from "react"
 import { useSquig } from "@/lib/store"
 
-/** how long the pointer has to sit still before the name comes back */
-const REST_MS = 550
+/** grace period after a drag ends, so nudge-release-nudge doesn't strobe */
+const SETTLE_MS = 160
 
 /** how long "saved" hangs around after ⌘S */
 const SAVED_MS = 1800
@@ -19,31 +24,30 @@ export function FileName() {
   const fileName = useSquig((s) => s.fileName)
   const renaming = useSquig((s) => s.renamingFile)
   const st = useSquig.getState
-  const [resting, setResting] = useState(true)
+  const [ducked, setDucked] = useState(false)
   const [saved, setSaved] = useState(false)
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // mirrors `resting` so a drag's worth of moves doesn't churn React state
-  const restingRef = useRef(true)
 
-  // Hide on any pointer movement, reveal after the pointer has been still.
+  // Out of the way for as long as the drag lasts, back once it settles.
+  //
+  // Driven off the store's edges rather than a selector: a drag writes to the
+  // store on every pointer move, and only the first and last of those tell us
+  // anything. `busy` is a plain local, not a ref — nothing renders from it.
   useEffect(() => {
-    const hide = () => {
-      restingRef.current = false
-      setResting(false)
-    }
-    const show = () => {
-      restingRef.current = true
-      setResting(true)
-    }
-    const onMove = () => {
-      if (restingRef.current) hide()
-      if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(show, REST_MS)
-    }
-    window.addEventListener("pointermove", onMove, { passive: true })
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let busy = false
+    const unsub = useSquig.subscribe((s) => {
+      // a canvas gesture with hands on a layer, or a library item mid-flight
+      const now = s.transforming || s.placingDrag
+      if (now === busy) return
+      busy = now
+      if (timer) clearTimeout(timer)
+      timer = null
+      if (now) setDucked(true)
+      else timer = setTimeout(() => setDucked(false), SETTLE_MS)
+    })
     return () => {
-      window.removeEventListener("pointermove", onMove)
-      if (timer.current) clearTimeout(timer.current)
+      unsub()
+      if (timer) clearTimeout(timer)
     }
   }, [])
 
@@ -62,14 +66,18 @@ export function FileName() {
     }
   }, [])
 
-  const shown = resting || renaming || saved
+  // renaming and the save note both outrank the duck: neither should vanish
+  // because the other hand started a drag
+  const shown = !ducked || renaming || saved
 
   return (
     <div
+      // `pointer-events-none` while ducked is load-bearing, not just tidy: a
+      // library item released over this strip hit-tests through to the canvas
+      // and actually lands there.
       className="pointer-events-none absolute top-4 left-1/2 z-30 flex -translate-x-1/2 justify-center transition-opacity"
       // out of the way quickly, back in gently
       style={{ opacity: shown ? 1 : 0, transitionDuration: shown ? "260ms" : "110ms" }}
-      onPointerDown={(e) => e.stopPropagation()}
     >
       {renaming ? (
         <NameInput initial={fileName} />
