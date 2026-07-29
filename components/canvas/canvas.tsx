@@ -300,7 +300,13 @@ export function Canvas() {
 
       // once a press has travelled far enough it is a drag for good — measured
       // radially, so a diagonal wiggle isn't held to a longer leash
-      if (!g.exceeded && Math.hypot(clientX - g.sx, clientY - g.sy) >= DRAG_THRESHOLD) g.exceeded = true
+      if (!g.exceeded && Math.hypot(clientX - g.sx, clientY - g.sy) >= DRAG_THRESHOLD) {
+        g.exceeded = true
+        // hands are now on the geometry: chrome that floats over the canvas
+        // (the file name) gets out of the way until the drag ends. Pan and
+        // marquee leave every layer where it is, so they don't count.
+        if (g.kind !== "pan" && g.kind !== "marquee") s.setTransforming(true)
+      }
 
       if (g.kind === "pan") {
         s.setViewport({ ...v, x: g.ox + (clientX - g.sx), y: g.oy + (clientY - g.sy) })
@@ -583,11 +589,12 @@ export function Canvas() {
     gestureRef.current = null
     gestureAbort.current?.abort()
     gestureAbort.current = null
+    st().setTransforming(false)
     setGestureKind(null)
     setGuides([])
     setLivePoints(null)
     setMarquee(null)
-  }, [])
+  }, [st])
 
   /** Pointer up, or anything else that means "keep what they did". */
   const finishGesture = useCallback(() => {
