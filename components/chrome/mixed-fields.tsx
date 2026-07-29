@@ -387,18 +387,21 @@ export function MixedTextField({
   onCommit,
   className,
   ariaLabel,
+  placeholder,
 }: {
   shared: Shared<string>
   onCommit: (v: string) => void
   className?: string
   ariaLabel?: string
+  /** shown when the field is genuinely empty — a dash still wins for mixed */
+  placeholder?: string
 }) {
   return (
     <CommitInput
       ariaLabel={ariaLabel}
       className={cn("h-7 px-2 text-[11px]", className)}
       value={shared.mixed ? "" : shared.value}
-      placeholder={shared.mixed ? MIXED_LABEL : undefined}
+      placeholder={shared.mixed ? MIXED_LABEL : placeholder}
       onCommit={(raw) => {
         // blanking a mixed field is how you back out of it, not a request to
         // wipe the label off every selected component

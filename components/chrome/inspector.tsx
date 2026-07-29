@@ -28,7 +28,7 @@ import { IconAction, IconToggle, Segmented, type SegmentOption } from "@/compone
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { FlipHorizontal, FlipVertical, Link as LinkIcon, Trash2, Unlink } from "lucide-react"
+import { Bold, FlipHorizontal, FlipVertical, Italic, Trash2, Underline, Unlink } from "lucide-react"
 import { kbd } from "@/lib/shortcuts"
 
 // ---------------------------------------------------------------------------
@@ -67,6 +67,14 @@ const STROKE_OPTIONS: readonly SegmentOption<StrokeWeight>[] = [
   { value: "regular", label: "Regular pen", content: <PenChip height={1.75} /> },
   { value: "heavy", label: "Heavy pen", content: <PenChip height={3} /> },
 ]
+
+/** Drawn as icons, not as styled letters — a glyph small enough to fit the
+    toggle is too small to read as bold-versus-regular at a glance. */
+const TEXT_STYLES = [
+  { key: "bold", label: "Bold", icon: Bold },
+  { key: "italic", label: "Italic", icon: Italic },
+  { key: "underline", label: "Underline", icon: Underline },
+] as const
 
 // ---------------------------------------------------------------------------
 
@@ -247,36 +255,34 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
           </StackRow>
 
           <Row label="Style">
-            {(["bold", "italic", "underline"] as const).map((style) => {
-              const on = shared(texts.map((n) => !!n[style]))
+            {TEXT_STYLES.map(({ key, label, icon: Icon }) => {
+              const on = shared(texts.map((n) => !!n[key]))
               return (
                 <IconToggle
-                  key={style}
-                  label={style[0].toUpperCase() + style.slice(1)}
-                  hint={kbd(`mod+${style[0]}`)}
+                  key={key}
+                  label={label}
+                  hint={kbd(`mod+${key[0]}`)}
                   pressed={!on.mixed && on.value}
                   mixed={on.mixed}
-                  onPressedChange={() => st().toggleTextStyle(style)}
+                  onPressedChange={() => st().toggleTextStyle(key)}
                 >
-                  <span
-                    className={
-                      style === "bold" ? "font-bold" : style === "italic" ? "font-serif italic" : "underline"
-                    }
-                  >
-                    {style[0].toUpperCase()}
-                  </span>
+                  <Icon className="size-4" />
                 </IconToggle>
               )
             })}
-            <IconToggle
-              label="Link"
-              hint={kbd("mod+k")}
-              pressed={texts.every((n) => !!n.link)}
-              mixed={shared(texts.map((n) => !!n.link)).mixed}
-              onPressedChange={() => st().setLinkOpen(true)}
-            >
-              <LinkIcon className="size-3.5" />
-            </IconToggle>
+          </Row>
+
+          {/* A link is a value, not a mode — so it gets a field showing where
+              the text actually points. Empty means it points nowhere, and
+              clearing the field is how you unlink. ⌘K still opens the floating
+              editor over the canvas for the same value. */}
+          <Row label="Link">
+            <MixedTextField
+              ariaLabel="Link"
+              placeholder="nowhere yet"
+              shared={shared(texts.map((n) => n.link ?? ""))}
+              onCommit={(v) => st().setLinkOnSelection(v)}
+            />
           </Row>
 
           <Row label="Size">
