@@ -3,7 +3,7 @@
 import { create } from "zustand"
 import { nanoid } from "nanoid"
 import type { ComponentNode, SquigNode, TextNode, Tool, Viewport, ShapeKind } from "./types"
-import { screenToWorld, unionBox } from "./types"
+import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { getDef } from "./library/registry"
 import { breakApart } from "./library/break-apart"
 import { applyTheme, DEFAULT_FONT, DEFAULT_THEME, type FontMode, type ThemeName } from "./theme"
@@ -180,7 +180,11 @@ function sanitize(
   for (const [id, n] of Object.entries(nodes ?? {})) {
     if (!n || typeof n !== "object") continue
     if (FINITE_KEYS.some((k) => !Number.isFinite((n as SquigNode)[k]))) continue
-    clean[id] = { ...n, w: Math.max(0, n.w), h: Math.max(0, n.h) }
+    const node: SquigNode = { ...n, w: Math.max(0, n.w), h: Math.max(0, n.h) }
+    // shapes stored a boolean fill before they had a tonal ladder; upgrade on
+    // the way in so nothing downstream has to know the old spelling existed
+    if (node.type === "shape") node.fill = normalizeFill(node.fill)
+    clean[id] = node
   }
   const seen = new Set<string>()
   const ord = (order ?? []).filter((id) => {

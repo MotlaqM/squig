@@ -18,6 +18,7 @@ import {
 } from "@phosphor-icons/react"
 import { useSquig } from "@/lib/store"
 import { cn } from "@/lib/utils"
+import { Panel } from "@/components/ui/panel"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 function RailButton({
@@ -34,20 +35,19 @@ function RailButton({
   icon: PhosphorIcon
 }) {
   return (
-    <Tooltip delayDuration={400}>
-      <TooltipTrigger asChild>
-        <button
-          type="button"
-          onClick={onClick}
-          aria-label={label}
-          aria-pressed={active}
-          className={cn(
-            "flex size-9 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            active && "bg-foreground text-background hover:bg-foreground hover:text-background"
-          )}
-        >
-          <Icon className="size-[18px]" weight={active ? "fill" : "regular"} />
-        </button>
+    <Tooltip>
+      <TooltipTrigger
+        aria-label={label}
+        aria-pressed={active}
+        onClick={onClick}
+        className={cn(
+          "flex size-9 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40",
+          active
+            ? "bg-[var(--sq-ink)] text-[var(--sq-paper)]"
+            : "text-muted-foreground hover:bg-accent hover:text-foreground"
+        )}
+      >
+        <Icon className="size-[18px]" weight={active ? "fill" : "regular"} />
       </TooltipTrigger>
       <TooltipContent side="right" className="flex items-center gap-2">
         {label}
@@ -65,11 +65,10 @@ export function LeftRail() {
   const st = useSquig.getState
 
   return (
-    <TooltipProvider>
-      <div
-        data-squig-chrome
-        className="absolute top-1/2 left-3 z-30 flex -translate-y-1/2 flex-col gap-1 rounded-xl border bg-background p-1.5 shadow-md"
-      >
+    // one shared delay for the whole rail: skimming across the tools after the
+    // first tooltip shows the rest instantly, which is the point of grouping
+    <TooltipProvider delay={400} closeDelay={80}>
+      <Panel className="absolute top-1/2 left-3 z-30 -translate-y-1/2 gap-1 p-1.5">
         <RailButton
           active={tool === "select" && !panel}
           label="Select"
@@ -140,7 +139,7 @@ export function LeftRail() {
             st().setTool("arrow")
           }}
         />
-      </div>
+      </Panel>
     </TooltipProvider>
   )
 }

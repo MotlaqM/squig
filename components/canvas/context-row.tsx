@@ -11,12 +11,33 @@
 import { useCallback, useState } from "react"
 
 import { useSquig } from "@/lib/store"
-import type { SquigNode, Viewport, ComponentNode, ShapeNode, ArrowNode } from "@/lib/types"
+import type { SquigNode, Viewport, ComponentNode, ShapeNode, ArrowNode, FillTone } from "@/lib/types"
+import { normalizeFill } from "@/lib/types"
 import { shared, sharedControls, unionBounds } from "@/lib/selection"
 import { VariantControl } from "@/components/chrome/variant-controls"
 import { MixedSwitch } from "@/components/chrome/mixed-fields"
 import { AlignRow } from "@/components/chrome/align-row"
-import { Label } from "@/components/ui/label"
+import { Segmented, type SegmentOption } from "@/components/ui/segmented"
+import { Panel } from "@/components/ui/panel"
+
+/** Fill tones, as chips — the same four the inspector offers, drawn smaller. */
+const FILL_OPTIONS: readonly SegmentOption<FillTone>[] = (
+  [
+    ["none", "No fill", undefined],
+    ["paper", "Paper", "var(--sq-paper)"],
+    ["light", "Light shade", "var(--sq-shade)"],
+    ["strong", "Strong shade", "var(--sq-shade-strong)"],
+  ] as const
+).map(([value, label, bg]) => ({
+  value,
+  label,
+  content: (
+    <span
+      className="block size-3 rounded-[3px] border border-[var(--sq-faint)]"
+      style={{ background: bg ?? "transparent" }}
+    />
+  ),
+}))
 
 /** how many knobs fit before the row stops being a "quick" anything */
 const MAX_QUICK = 3
@@ -109,13 +130,7 @@ export function ContextRow({
   }
 
   return (
-    <div
-      ref={measure}
-      data-squig-chrome
-      className="absolute z-20 flex items-center gap-3 rounded-lg border bg-background px-2.5 py-1.5 shadow-md"
-      style={style}
-      onPointerDown={(e) => e.stopPropagation()}
-    >
+    <Panel ref={measure} className="absolute z-20 flex-row items-center gap-3 px-2.5 py-1.5" style={style}>
       {multi && <AlignRow count={selectedNodes.length} />}
       {multi && (quick.length > 0 || showFill || showHead) && <span className="h-4 w-px bg-border" />}
 
@@ -124,19 +139,19 @@ export function ContextRow({
       ))}
 
       {showFill && (
-        <div className="flex items-center gap-2">
-          <Label className="text-xs font-normal text-muted-foreground">Fill</Label>
-          <MixedSwitch
-            ariaLabel="Scribble fill"
-            shared={shared(shapes.map((n) => n.fill))}
-            onChange={(on) => patch((n) => (n.type === "shape" ? ({ fill: on } as Partial<SquigNode>) : null))}
+        <div className="flex w-[132px] items-center gap-2">
+          <Segmented
+            ariaLabel="Fill tone"
+            options={FILL_OPTIONS}
+            shared={shared(shapes.map((n) => normalizeFill(n.fill)))}
+            onChange={(tone) => patch((n) => (n.type === "shape" ? ({ fill: tone } as Partial<SquigNode>) : null))}
           />
         </div>
       )}
 
       {showHead && (
         <div className="flex items-center gap-2">
-          <Label className="text-xs font-normal text-muted-foreground">Arrowhead</Label>
+          <span className="text-[11px] text-muted-foreground">Arrowhead</span>
           <MixedSwitch
             ariaLabel="Arrowhead"
             shared={shared(arrows.map((n) => n.head))}
@@ -144,6 +159,6 @@ export function ContextRow({
           />
         </div>
       )}
-    </div>
+    </Panel>
   )
 }

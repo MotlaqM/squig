@@ -11,6 +11,36 @@ export type Tool =
 
 export type ShapeKind = "rect" | "ellipse"
 
+/**
+ * Area fill for a hand-drawn shape — the same three-tone ladder the library
+ * components print with, plus opaque paper for a box that has to occlude what
+ * it sits on. There is no fourth tone on purpose; see lib/theme.ts.
+ */
+export type FillTone = "none" | "paper" | "light" | "strong"
+
+/**
+ * Pen pressure for a drawn line. One pen, pressed harder or softer — squig has
+ * no second stroke colour, so weight is the whole outline vocabulary.
+ */
+export type StrokeWeight = "light" | "regular" | "heavy"
+
+/** Outline settings shared by every hand-drawn node. */
+export interface Outlined {
+  stroke?: StrokeWeight
+  dashed?: boolean
+}
+
+/**
+ * `fill` was a boolean before shapes had a tonal ladder. Old documents live in
+ * localStorage and in files people already saved, so read both spellings and
+ * write only the new one.
+ */
+export function normalizeFill(v: unknown): FillTone {
+  if (v === true) return "strong"
+  if (v === "paper" || v === "light" || v === "strong") return v
+  return "none"
+}
+
 export interface BaseNode {
   id: string
   x: number
@@ -38,13 +68,14 @@ export interface ComponentNode extends BaseNode {
   props: Record<string, unknown>
 }
 
-export interface ShapeNode extends BaseNode {
+export interface ShapeNode extends BaseNode, Outlined {
   type: "shape"
   shape: ShapeKind
-  fill: boolean
+  /** older documents wrote a boolean here — read it through normalizeFill */
+  fill: FillTone
 }
 
-export interface DrawNode extends BaseNode {
+export interface DrawNode extends BaseNode, Outlined {
   type: "draw"
   /** freehand points, relative to node origin (0..w, 0..h) */
   points: [number, number][]
@@ -61,7 +92,7 @@ export interface TextNode extends BaseNode {
   link?: string
 }
 
-export interface ArrowNode extends BaseNode {
+export interface ArrowNode extends BaseNode, Outlined {
   type: "arrow"
   /** [start, end] relative to node origin — components of w/h so they scale on resize */
   points: [[number, number], [number, number]]

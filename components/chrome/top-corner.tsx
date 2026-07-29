@@ -20,6 +20,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { Panel } from "@/components/ui/panel"
 import { THEMES, THEME_NAMES, type ThemeName } from "@/lib/theme"
 import { kbd } from "@/lib/shortcuts"
 
@@ -44,66 +45,60 @@ export function TopCorner() {
   const keepFocus = useRef(false)
 
   return (
-    <div
-      data-squig-chrome
-      className="absolute top-4 left-4 z-30 flex items-center gap-1 rounded-xl border bg-background p-1 shadow-md"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
+    <Panel className="absolute top-4 left-4 z-30 flex-row items-center gap-1 p-1">
       <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            className="flex items-center gap-1 rounded-lg px-2 py-1 hover:bg-accent"
-            title="file menu"
+        <DropdownMenuTrigger
+          title="file menu"
+          className="flex items-center gap-1 rounded-lg px-2 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40"
+        >
+          <span
+            className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none"
+            style={{ color: "var(--sq-ink)" }}
           >
-            <span
-              className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none"
-              style={{ color: "var(--sq-ink)" }}
-            >
-              squig
-            </span>
-            <CaretDownIcon className="size-3 text-muted-foreground" weight="bold" />
-          </button>
+            squig
+          </span>
+          <CaretDownIcon className="size-3 text-muted-foreground" weight="bold" />
         </DropdownMenuTrigger>
         <DropdownMenuContent
           align="start"
           className="w-56"
-          onCloseAutoFocus={(e) => {
-            if (keepFocus.current) {
-              keepFocus.current = false
-              e.preventDefault()
-            }
+          // Rename hands focus to the floating name field; returning focus to
+          // the wordmark here would snatch it straight back.
+          finalFocus={() => {
+            if (!keepFocus.current) return true
+            keepFocus.current = false
+            return false
           }}
         >
-          <DropdownMenuItem onSelect={() => st().newFile()}>New file</DropdownMenuItem>
-          <DropdownMenuItem onSelect={importDoc}>Open…</DropdownMenuItem>
-          <DropdownMenuItem onSelect={exportDoc}>
+          <DropdownMenuItem onClick={() => st().newFile()}>New file</DropdownMenuItem>
+          <DropdownMenuItem onClick={importDoc}>Open…</DropdownMenuItem>
+          <DropdownMenuItem onClick={exportDoc}>
             Export
             <DropdownMenuShortcut>.squig.json</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
-            onSelect={() => {
+            onClick={() => {
               keepFocus.current = true
               st().setRenamingFile(true)
             }}
           >
             Rename
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => st().setCommandOpen(true)}>
+          <DropdownMenuItem onClick={() => st().setCommandOpen(true)}>
             Find anything
             <DropdownMenuShortcut>{kbd("mod+k")}</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => st().setShortcutsOpen(true)}>
+          <DropdownMenuItem onClick={() => st().setShortcutsOpen(true)}>
             Keyboard shortcuts
             <DropdownMenuShortcut>{kbd("shift+/")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onSelect={() => st().undo()}>
+          <DropdownMenuItem onClick={() => st().undo()}>
             Undo
             <DropdownMenuShortcut>⌘Z</DropdownMenuShortcut>
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => st().redo()}>
+          <DropdownMenuItem onClick={() => st().redo()}>
             Redo
             <DropdownMenuShortcut>⇧⌘Z</DropdownMenuShortcut>
           </DropdownMenuItem>
@@ -117,7 +112,7 @@ export function TopCorner() {
             </DropdownMenuSubTrigger>
             <DropdownMenuSubContent className="w-48">
               {THEME_NAMES.map((name) => (
-                <DropdownMenuItem key={name} onSelect={() => st().setTheme(name)}>
+                <DropdownMenuItem key={name} onClick={() => st().setTheme(name)}>
                   <span className="flex items-center gap-2">
                     <Swatch name={name} />
                     {THEMES[name].label}
@@ -127,23 +122,23 @@ export function TopCorner() {
               ))}
             </DropdownMenuSubContent>
           </DropdownMenuSub>
-          <DropdownMenuItem onSelect={() => st().setFont(font === "hand" ? "clean" : "hand")}>
+          <DropdownMenuItem onClick={() => st().setFont(font === "hand" ? "clean" : "hand")}>
             {font === "hand" ? "Use clean lettering" : "Use hand lettering"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => st().setContextRow(!contextRow)}>
+          <DropdownMenuItem onClick={() => st().setContextRow(!contextRow)}>
             {contextRow ? "Hide context menu" : "Show context menu"}
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => st().setViewport({ x: 0, y: 0, zoom: 1 })}>
+          <DropdownMenuItem onClick={() => st().setViewport({ x: 0, y: 0, zoom: 1 })}>
             Reset zoom
             <DropdownMenuShortcut>{kbd("mod+0")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
-          <DropdownMenuItem variant="destructive" onSelect={() => st().clearCanvas()}>
+          <DropdownMenuItem variant="destructive" onClick={() => st().clearCanvas()}>
             Clear canvas
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
-    </div>
+    </Panel>
   )
 }
 
@@ -161,11 +156,7 @@ export function ZoomPill() {
   }
 
   return (
-    <div
-      data-squig-chrome
-      className="absolute bottom-4 left-4 z-30 flex items-center gap-0.5 rounded-xl border bg-background px-1 py-0.5 shadow-md"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
+    <Panel className="absolute bottom-4 left-4 z-30 flex-row items-center gap-0.5 px-1 py-0.5">
       <button
         type="button"
         className="size-7 rounded-lg text-sm text-muted-foreground hover:bg-accent"
@@ -188,7 +179,7 @@ export function ZoomPill() {
       >
         +
       </button>
-    </div>
+    </Panel>
   )
 }
 
@@ -201,7 +192,7 @@ export function CommandHint() {
       onPointerDown={(e) => e.stopPropagation()}
       onClick={() => st().setCommandOpen(true)}
       data-squig-chrome
-      className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border bg-background px-3.5 py-1.5 text-xs text-muted-foreground shadow-md hover:text-foreground"
+      className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-background px-3.5 py-1.5 text-xs text-muted-foreground shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-8px_rgb(0_0_0/0.12)] hover:text-foreground"
     >
       search everything
       <kbd className="inline-flex h-4 items-center rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>

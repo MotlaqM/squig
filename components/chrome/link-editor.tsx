@@ -43,7 +43,7 @@ function Editor({ node: first }: { node: TextNode }) {
 
   return (
     <div
-      className="absolute z-40 flex items-center gap-1.5 rounded-xl border bg-background p-1 pl-2.5 shadow-lg"
+      className="absolute z-40 flex items-center gap-1.5 rounded-xl border border-border/80 bg-background p-1 pl-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-8px_rgb(0_0_0/0.12)]"
       style={{ left: Math.max(8, left), top: Math.max(8, top) }}
       onPointerDown={(e) => e.stopPropagation()}
     >

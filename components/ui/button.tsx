@@ -1,6 +1,6 @@
 import * as React from "react"
 import { cva, type VariantProps } from "class-variance-authority"
-import { Slot } from "radix-ui"
+import { useRender } from "@base-ui/react/use-render"
 
 import { cn } from "@/lib/utils"
 
@@ -41,27 +41,32 @@ const buttonVariants = cva(
   }
 )
 
+/**
+ * `render` replaces Radix's `asChild`: pass an element to compose the button's
+ * behaviour onto it. Base UI's convention, and what the base-nova registry
+ * ships, so a component pulled from shadcn drops in without translation.
+ */
 function Button({
   className,
   variant = "default",
   size = "default",
-  asChild = false,
+  render,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
-    asChild?: boolean
+    render?: useRender.RenderProp
   }) {
-  const Comp = asChild ? Slot.Root : "button"
-
-  return (
-    <Comp
-      data-slot="button"
-      data-variant={variant}
-      data-size={size}
-      className={cn(buttonVariants({ variant, size, className }))}
-      {...props}
-    />
-  )
+  return useRender({
+    render,
+    defaultTagName: "button",
+    props: {
+      "data-slot": "button",
+      "data-variant": variant,
+      "data-size": size,
+      className: cn(buttonVariants({ variant, size, className })),
+      ...props,
+    },
+  })
 }
 
 export { Button, buttonVariants }

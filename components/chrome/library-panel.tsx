@@ -11,6 +11,7 @@ import { groupDefs, searchDefs, type ComponentDef } from "@/lib/library/registry
 import { SketchPrims } from "@/components/canvas/sketch"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Panel, PanelFooter } from "@/components/ui/panel"
 import { cn } from "@/lib/utils"
 import { MagnifyingGlassIcon } from "@phosphor-icons/react"
 
@@ -28,8 +29,8 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
       onClick={onPick}
       title={def.name}
       className={cn(
-        "group flex flex-col items-center gap-1 rounded-lg border p-1 transition-colors hover:border-foreground/40 hover:bg-accent",
-        active && "border-foreground bg-accent"
+        "group flex flex-col items-center gap-1 rounded-lg border border-border/70 p-1 transition-colors outline-none hover:border-border hover:bg-accent",
+        active && "border-[var(--sq-ink)] bg-[var(--sq-ink)]/8 ring-1 ring-inset ring-[var(--sq-ink)]/25"
       )}
     >
       <svg width={BOX_W} height={BOX_H} className="shrink-0">
@@ -51,10 +52,10 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
 export function LibraryPanel() {
   const panel = useSquig((s) => s.panel)
   if (!panel) return null
-  return <Panel key={panel} panel={panel} />
+  return <Library key={panel} panel={panel} />
 }
 
-function Panel({ panel }: { panel: Exclude<PanelKind, null> }) {
+function Library({ panel }: { panel: Exclude<PanelKind, null> }) {
   const placing = useSquig((s) => s.placing)
   const st = useSquig.getState
   const [query, setQuery] = useState("")
@@ -70,12 +71,8 @@ function Panel({ panel }: { panel: Exclude<PanelKind, null> }) {
   const first = sections[0]?.defs[0]
 
   return (
-    <div
-      data-squig-chrome
-      className="absolute top-1/2 left-16 z-30 flex max-h-[82vh] w-[300px] -translate-y-1/2 flex-col overflow-hidden rounded-xl border bg-background shadow-lg"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
-      <div className="relative shrink-0 border-b p-2.5">
+    <Panel className="absolute top-1/2 left-16 z-30 max-h-[82vh] w-[300px] -translate-y-1/2">
+      <div className="relative shrink-0 border-b border-border/70 p-2.5">
         <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-5 size-3.5 -translate-y-1/2 text-muted-foreground" />
         <Input
           ref={inputRef}
@@ -92,9 +89,9 @@ function Panel({ panel }: { panel: Exclude<PanelKind, null> }) {
       </div>
 
       {/* min-h-0 — without it the flex item won't shrink below its content.
-          type="scroll" flashes the bar while scrolling, so a list this long
-          doesn't look like it ends at the fold. */}
-      <ScrollArea type="scroll" className="min-h-0 flex-1 overscroll-contain">
+          The scrollbar fades in while scrolling or hovering, so a list this
+          long doesn't look like it ends at the fold. */}
+      <ScrollArea className="min-h-0 flex-1 overscroll-contain">
         <div className="p-2.5 pt-1">
           {sections.map((section) => (
             <div key={section.group} className="mb-2">
@@ -121,9 +118,9 @@ function Panel({ panel }: { panel: Exclude<PanelKind, null> }) {
         </div>
       </ScrollArea>
 
-      <div className="shrink-0 border-t px-3 py-2 text-xs text-muted-foreground">
+      <PanelFooter className="px-3 py-2 text-xs text-muted-foreground">
         {placing ? "now click the canvas to drop it" : `${total} to choose from — ⌘K searches everything`}
-      </div>
-    </div>
+      </PanelFooter>
+    </Panel>
   )
 }

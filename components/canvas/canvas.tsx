@@ -452,7 +452,7 @@ export function Canvas() {
           if (!g.exceeded) return
           if (g.what === "shape") {
             g.id = s.addNode(
-              { type: "shape", shape: s.shapeKind, fill: false, x, y, w: Math.max(w, 8), h: Math.max(h, 8) } as Omit<
+              { type: "shape", shape: s.shapeKind, fill: "none", x, y, w: Math.max(w, 8), h: Math.max(h, 8) } as Omit<
                 SquigNode,
                 "id" | "seed"
               >,
@@ -610,7 +610,7 @@ export function Canvas() {
         id =
           g.what === "shape"
             ? s.addNode(
-                { type: "shape", shape: s.shapeKind, fill: false, x: g.wx, y: g.wy, w, h } as Omit<SquigNode, "id" | "seed">,
+                { type: "shape", shape: s.shapeKind, fill: "none", x: g.wx, y: g.wy, w, h } as Omit<SquigNode, "id" | "seed">,
                 { select: false }
               )
             : s.addNode(
