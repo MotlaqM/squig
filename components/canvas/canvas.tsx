@@ -13,6 +13,7 @@ import { computeSnap, computeResizeSnap, makeSnapRect, type GuideLine, type Snap
 import { useSpacebarPan } from "@/lib/canvas/use-spacebar-pan"
 import { NodeSketch, SketchPrims } from "./sketch"
 import { getDef, renderComponent } from "@/lib/library/registry"
+import { exportDoc } from "@/lib/file-io"
 import { ContextRow } from "./context-row"
 
 const MIN_ZOOM = 0.1
@@ -512,6 +513,12 @@ export function Canvas() {
           case "KeyD":
             e.preventDefault()
             s.duplicateSelected()
+            return
+          case "KeyS":
+            // squig saves as you draw; ⌘S is for the hand that needs to hear it
+            e.preventDefault()
+            if (e.shiftKey) exportDoc()
+            else s.saveNow()
             return
           case "KeyA":
             e.preventDefault()

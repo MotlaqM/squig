@@ -147,6 +147,13 @@ export const SHORTCUT_GROUPS: ShortcutGroup[] = [
     ],
   },
   {
+    title: "Files",
+    rows: [
+      { keys: ["mod+s"], label: "Save to this browser" },
+      { keys: ["mod+shift+s"], label: "Export a copy" },
+    ],
+  },
+  {
     title: "Everything else",
     rows: [
       { keys: ["mod+k", "mod+/"], label: "Search everything" },

@@ -29,6 +29,12 @@ component and its pieces become editable primitives. One-way, on purpose.
 **⌘K searches everything.** Tools, actions, and every component and block, in
 one sheet. Enter drops it in the middle of your view.
 
+**Your files stay in your browser.** Every document autosaves as you draw, and
+the file menu keeps a list of the recent ones to open again. New file starts a
+new document rather than painting over the last one. No accounts, no cloud —
+which also means clearing site data clears the lot, so Export a copy
+(`⇧⌘S`) is there when a file matters.
+
 ## Keyboard
 
 Figma's, so your hands already know it. `?` opens the full list in the app.
@@ -48,6 +54,7 @@ Figma's, so your hands already know it. `?` opens the full list in the app.
 | `⌥⌘]` / `⌥⌘[` (or `]` / `[`) | bring to front / send to back |
 | `⇧H` / `⇧V` | flip horizontal / vertical |
 | `⌘B` `⌘I` `⌘U` | bold, italic, underline |
+| `⌘S` / `⇧⌘S` | save to this browser / export a copy |
 | arrows (`⇧` for 10px) | nudge |
 | space-drag, middle-drag | pan |
 | `⌘+` / `⌘-`, `⌘`-scroll | zoom the canvas, never the browser |
@@ -87,6 +94,7 @@ lib/sketch/              drawing primitives + Phosphor icons
 lib/library/             every component and block definition
 lib/canvas/snap-engine   alignment/snapping math
 lib/store.ts             zustand doc state + history
+lib/files.ts             the local file drawer — autosave, recents, prefs
 ```
 
 ## Stack
