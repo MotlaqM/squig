@@ -28,7 +28,15 @@ import { IconAction, IconToggle, Segmented, type SegmentOption } from "@/compone
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Bold, FlipHorizontal, FlipVertical, Italic, Trash2, Underline, Unlink } from "lucide-react"
+import {
+  FlipHorizontalIcon,
+  FlipVerticalIcon,
+  LinkBreakIcon,
+  TextBIcon,
+  TextItalicIcon,
+  TextUnderlineIcon,
+  TrashIcon,
+} from "@phosphor-icons/react"
 import { kbd } from "@/lib/shortcuts"
 
 // ---------------------------------------------------------------------------
@@ -71,9 +79,9 @@ const STROKE_OPTIONS: readonly SegmentOption<StrokeWeight>[] = [
 /** Drawn as icons, not as styled letters — a glyph small enough to fit the
     toggle is too small to read as bold-versus-regular at a glance. */
 const TEXT_STYLES = [
-  { key: "bold", label: "Bold", icon: Bold },
-  { key: "italic", label: "Italic", icon: Italic },
-  { key: "underline", label: "Underline", icon: Underline },
+  { key: "bold", label: "Bold", icon: TextBIcon },
+  { key: "italic", label: "Italic", icon: TextItalicIcon },
+  { key: "underline", label: "Underline", icon: TextUnderlineIcon },
 ] as const
 
 // ---------------------------------------------------------------------------
@@ -235,10 +243,10 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
 
         <Row label="Flip">
           <IconAction label={`Flip horizontally · ${kbd("shift+h")}`} onClick={() => st().flipSelected("x")}>
-            <FlipHorizontal className="size-3.5" />
+            <FlipHorizontalIcon className="size-3.5" />
           </IconAction>
           <IconAction label={`Flip vertically · ${kbd("shift+v")}`} onClick={() => st().flipSelected("y")}>
-            <FlipVertical className="size-3.5" />
+            <FlipVerticalIcon className="size-3.5" />
           </IconAction>
         </Row>
       </PanelSection>
@@ -394,7 +402,7 @@ function Footer({ selected }: { selected: SquigNode[] }) {
     <PanelFooter>
       {components.length > 0 && (
         <Button variant="outline" size="sm" className="h-ctl flex-1 rounded-chrome-sm text-label" onClick={() => st().detachSelected()}>
-          <Unlink className="size-3" /> Detach
+          <LinkBreakIcon className="size-3" /> Detach
           {components.length > 1 && <span className="tabular-nums">({components.length})</span>}
         </Button>
       )}
@@ -404,7 +412,7 @@ function Footer({ selected }: { selected: SquigNode[] }) {
         className="h-ctl flex-1 rounded-chrome-sm text-label text-muted-foreground hover:text-destructive"
         onClick={() => st().deleteSelected()}
       >
-        <Trash2 className="size-3" /> Delete
+        <TrashIcon className="size-3" /> Delete
       </Button>
     </PanelFooter>
   )

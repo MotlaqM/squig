@@ -8,7 +8,7 @@
 import { useRef } from "react"
 import { useSquig } from "@/lib/store"
 import { exportDoc, importDoc } from "@/lib/file-io"
-import { CaretDownIcon } from "@phosphor-icons/react"
+import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -23,6 +23,7 @@ import {
 import { Panel } from "@/components/ui/panel"
 import { THEMES, THEME_NAMES, type ThemeName } from "@/lib/theme"
 import { kbd } from "@/lib/shortcuts"
+import { RecentFiles } from "@/components/chrome/recent-files"
 
 /** Two-tone chip showing a palette's paper and ink. */
 function Swatch({ name }: { name: ThemeName }) {
@@ -73,10 +74,16 @@ export function TopCorner() {
           }}
         >
           <DropdownMenuItem onClick={() => st().newFile()}>New file</DropdownMenuItem>
-          <DropdownMenuItem onClick={importDoc}>Open…</DropdownMenuItem>
+          <RecentFiles />
+          <DropdownMenuItem onClick={importDoc}>Open from disk…</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onClick={() => st().saveNow()}>
+            Save
+            <DropdownMenuShortcut>{kbd("mod+s")}</DropdownMenuShortcut>
+          </DropdownMenuItem>
           <DropdownMenuItem onClick={exportDoc}>
-            Export
-            <DropdownMenuShortcut>.squig.json</DropdownMenuShortcut>
+            Export a copy
+            <DropdownMenuShortcut>{kbd("mod+shift+s")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -119,7 +126,7 @@ export function TopCorner() {
                     <Swatch name={name} />
                     {THEMES[name].label}
                   </span>
-                  {theme === name && <DropdownMenuShortcut>✓</DropdownMenuShortcut>}
+                  {theme === name && <CheckIcon className="ml-auto size-3.5 text-muted-foreground" weight="bold" />}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuSubContent>

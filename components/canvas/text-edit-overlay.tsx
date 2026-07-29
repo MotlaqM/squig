@@ -92,9 +92,19 @@ function Editor({ node }: { node: SquigNode }) {
     commitRef.current = commit
   })
 
+  // the press that opens the editor is still unwinding while we mount, and its
+  // default action puts focus back on the canvas. Blurs before the editor has
+  // settled are that, not the user leaving — committing on one would delete a
+  // text node the instant it was placed.
+  const settled = useRef(false)
+
   useEffect(() => {
     taRef.current?.focus()
     taRef.current?.select()
+    const raf = requestAnimationFrame(() => {
+      settled.current = true
+    })
+    return () => cancelAnimationFrame(raf)
   }, [])
 
   useEffect(() => {
@@ -117,7 +127,13 @@ function Editor({ node }: { node: SquigNode }) {
       ref={taRef}
       value={value}
       onChange={(e) => setValue(e.target.value)}
-      onBlur={commit}
+      onBlur={() => {
+        if (!settled.current) {
+          requestAnimationFrame(() => taRef.current?.focus())
+          return
+        }
+        commit()
+      }}
       onKeyDown={(e) => {
         e.stopPropagation()
         if (e.key === "Escape") {

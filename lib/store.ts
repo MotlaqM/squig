@@ -7,6 +7,17 @@ import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { getDef } from "./library/registry"
 import { breakApart } from "./library/break-apart"
 import { applyTheme, DEFAULT_FONT, DEFAULT_THEME, type FontMode, type ThemeName } from "./theme"
+import {
+  INDEX_KEY,
+  deleteFile as dropFile,
+  listFiles,
+  loadPrefs,
+  migrateLegacyDoc,
+  readFile,
+  saveFile,
+  savePrefs,
+  type FileMeta,
+} from "./files"
 
 // ---------------------------------------------------------------------------
 // Store — flat node map + z-order, selection, viewport, tool, history.
@@ -33,7 +44,13 @@ export interface ContextMenuState {
 }
 
 interface SquigState {
+  /** which file in the drawer this canvas is — every doc has one */
+  docId: string
   fileName: string
+  /** the drawer, newest first; kept in state so menus re-render as it changes */
+  files: FileMeta[]
+  /** bumped by an explicit save, so the file name can say so out loud */
+  saveFlash: number
   nodes: Record<string, SquigNode>
   order: string[]
   selection: string[]
@@ -43,6 +60,9 @@ interface SquigState {
   panel: PanelKind
   /** component kind waiting to be placed on next canvas click */
   placing: string | null
+  /** the pending placement came out of a library drag, so it lands on pointer up
+   *  rather than on the next click */
+  placingDrag: boolean
   editingId: string | null
   contextRow: boolean
   theme: ThemeName
@@ -52,6 +72,8 @@ interface SquigState {
   contextMenu: ContextMenuState | null
   /** the floating file name is in its editable state */
   renamingFile: boolean
+  /** a gesture is actively changing a layer's geometry — move, resize, draw, create */
+  transforming: boolean
   /** the arrow tool draws a head — L is a plain line, ⇧L an arrow */
   arrowHead: boolean
   /** ⌘\ — everything but the canvas gets out of the way */
@@ -69,7 +91,7 @@ interface SquigState {
   setTool: (t: Tool) => void
   setShapeKind: (s: ShapeKind) => void
   setPanel: (p: PanelKind) => void
-  setPlacing: (kind: string | null) => void
+  setPlacing: (kind: string | null, opts?: { drag?: boolean }) => void
   setEditing: (id: string | null) => void
   setContextRow: (on: boolean) => void
   setTheme: (t: ThemeName) => void
@@ -79,6 +101,7 @@ interface SquigState {
   setCommandOpen: (open: boolean) => void
   setContextMenu: (m: ContextMenuState | null) => void
   setRenamingFile: (on: boolean) => void
+  setTransforming: (on: boolean) => void
   setArrowHead: (on: boolean) => void
   setUiHidden: (on: boolean) => void
   setShortcutsOpen: (on: boolean) => void
@@ -139,12 +162,17 @@ interface SquigState {
   insertComponent: (kind: string) => void
   alignSelected: (edge: "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom") => void
   newFile: () => void
+  /** swap the canvas to another file in the drawer, saving this one first */
+  openFile: (id: string) => void
+  deleteFile: (id: string) => void
+  /** write to the drawer right now instead of waiting out the debounce */
+  saveNow: () => void
   serialize: () => string
   loadDoc: (json: string) => boolean
 }
 
-const STORAGE_KEY = "squig:doc:v1"
 const MAX_HISTORY = 100
+const SAVE_DEBOUNCE_MS = 400
 const MIN_ZOOM = 0.1
 const MAX_ZOOM = 4
 /** breathing room around a zoom-to-fit, in screen px */
@@ -224,14 +252,14 @@ function cloneNodes(list: SquigNode[], dx: number, dy: number): SquigNode[] {
 }
 
 /** Frame a set of nodes in the window, with a margin so nothing kisses an edge. */
-function fitBox(set: (partial: { viewport: Viewport }) => void, list: SquigNode[]) {
+function fitBox(set: (partial: { viewport: Viewport }) => void, list: SquigNode[], cap = MAX_ZOOM) {
   const box = unionBox(list)
   if (!box) return
   const vw = window.innerWidth
   const vh = window.innerHeight
   const bw = Math.max(box.maxX - box.minX, 1)
   const bh = Math.max(box.maxY - box.minY, 1)
-  const zoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.min((vw - FIT_PADDING * 2) / bw, (vh - FIT_PADDING * 2) / bh)))
+  const zoom = Math.min(cap, Math.max(MIN_ZOOM, Math.min((vw - FIT_PADDING * 2) / bw, (vh - FIT_PADDING * 2) / bh)))
   set({
     viewport: {
       zoom,
@@ -258,20 +286,72 @@ function stepOrder(order: string[], ids: string[], dir: 1 | -1): string[] {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+/** true between an edit and the write that records it */
+let dirty = false
+
+/** Every edit calls this; the drawer only gets written once the hand rests. */
 function scheduleSave(get: () => SquigState) {
+  dirty = true
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const { fileName, nodes, order, contextRow, theme, font } = get()
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ fileName, nodes, order, contextRow, theme, font }))
-    } catch {
-      // storage full or unavailable — squig shrugs
-    }
-  }, 400)
+  saveTimer = setTimeout(() => flushSave(get), SAVE_DEBOUNCE_MS)
+}
+
+/**
+ * Write the current document to the drawer now. A blank canvas nobody has
+ * touched stays out of the list — until `force`, which is a person asking.
+ *
+ * A canvas with nothing new on it writes nothing at all: a second tab may be
+ * holding a fresher copy of this same document, and an idle tab closing is no
+ * reason to hand it back an old one.
+ */
+function flushSave(get: () => SquigState, force = false) {
+  if (saveTimer) {
+    clearTimeout(saveTimer)
+    saveTimer = null
+  }
+  const s = get()
+  savePrefs({ theme: s.theme, font: s.font, contextRow: s.contextRow, activeId: s.docId })
+  if (!dirty && !force) return
+  const known = s.files.some((f) => f.id === s.docId)
+  if (!s.order.length && !known && !force) return
+  const files = saveFile({
+    id: s.docId,
+    name: s.fileName,
+    nodes: s.nodes,
+    order: s.order,
+    updatedAt: Date.now(),
+  })
+  useSquig.setState({ files })
+  dirty = false
+}
+
+let watching = false
+/**
+ * A tab can close inside the debounce window. Catch it on the way out — and
+ * on the way to the background, which is all iOS ever gives you.
+ *
+ * The same listener keeps an eye on the drawer itself, so a file made in
+ * another tab shows up in this one's recents without a reload.
+ */
+function watchWindow(get: () => SquigState) {
+  if (watching || typeof window === "undefined") return
+  watching = true
+  const save = () => flushSave(get)
+  window.addEventListener("beforeunload", save)
+  window.addEventListener("pagehide", save)
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") save()
+  })
+  window.addEventListener("storage", (e) => {
+    if (e.key === INDEX_KEY) useSquig.setState({ files: listFiles() })
+  })
 }
 
 export const useSquig = create<SquigState>((set, get) => ({
+  docId: nanoid(8),
   fileName: "untitled scribbles",
+  files: [],
+  saveFlash: 0,
   nodes: {},
   order: [],
   selection: [],
@@ -280,6 +360,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   shapeKind: "rect",
   panel: null,
   placing: null,
+  placingDrag: false,
   editingId: null,
   contextRow: false,
   theme: DEFAULT_THEME,
@@ -288,6 +369,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   commandOpen: false,
   contextMenu: null,
   renamingFile: false,
+  transforming: false,
   arrowHead: true,
   uiHidden: false,
   shortcutsOpen: false,
@@ -300,10 +382,10 @@ export const useSquig = create<SquigState>((set, get) => ({
     set({ fileName: n })
     scheduleSave(get)
   },
-  setTool: (t) => set({ tool: t, placing: null, panel: null }),
+  setTool: (t) => set({ tool: t, placing: null, placingDrag: false, panel: null }),
   setShapeKind: (s) => set({ shapeKind: s }),
-  setPanel: (p) => set((st) => ({ panel: st.panel === p ? null : p, placing: null })),
-  setPlacing: (kind) => set({ placing: kind }),
+  setPanel: (p) => set((st) => ({ panel: st.panel === p ? null : p, placing: null, placingDrag: false })),
+  setPlacing: (kind, opts) => set({ placing: kind, placingDrag: kind !== null && opts?.drag === true }),
   setEditing: (id) => set({ editingId: id }),
   setContextRow: (on) => {
     set({ contextRow: on })
@@ -337,6 +419,9 @@ export const useSquig = create<SquigState>((set, get) => ({
     set({ commandOpen: open, contextMenu: null, shortcutsOpen: false, panel: open ? null : get().panel }),
   setContextMenu: (m) => set({ contextMenu: m }),
   setRenamingFile: (on) => set({ renamingFile: on }),
+  // called on the edges of a drag, so the hundreds of moves in between don't
+  // each write to the store
+  setTransforming: (on) => set((s) => (s.transforming === on ? s : { transforming: on })),
   setArrowHead: (on) => set({ arrowHead: on }),
   setUiHidden: (on) => set({ uiHidden: on }),
   setShortcutsOpen: (on) => set({ shortcutsOpen: on, commandOpen: false, contextMenu: null }),
@@ -526,30 +611,29 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   hydrate: () => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY)
-      if (raw) {
-        const doc = JSON.parse(raw)
-        const theme: ThemeName = doc.theme ?? DEFAULT_THEME
-        const font: FontMode = doc.font ?? DEFAULT_FONT
-        const clean = sanitize(doc.nodes, doc.order)
-        set({
-          fileName: doc.fileName ?? "untitled scribbles",
-          nodes: clean.nodes,
-          order: clean.order,
-          contextRow: doc.contextRow ?? false,
-          theme,
-          font,
-          hydrated: true,
-        })
-        applyTheme(theme, font)
-        return
-      }
-    } catch {
-      // corrupted doc — start fresh
-    }
-    applyTheme(get().theme, get().font)
-    set({ hydrated: true })
+    migrateLegacyDoc(() => nanoid(8))
+    const prefs = loadPrefs()
+    const files = listFiles()
+    // last file open wins; failing that, the most recent one we have
+    const wanted = prefs.activeId && files.some((f) => f.id === prefs.activeId) ? prefs.activeId : files[0]?.id
+    const doc = wanted ? readFile(wanted) : null
+    const clean = sanitize(doc?.nodes, doc?.order)
+
+    set({
+      docId: doc?.id ?? nanoid(8),
+      fileName: doc?.name ?? "untitled scribbles",
+      nodes: clean.nodes,
+      order: clean.order,
+      files,
+      contextRow: prefs.contextRow,
+      theme: prefs.theme,
+      font: prefs.font,
+      hydrated: true,
+    })
+    applyTheme(prefs.theme, prefs.font)
+    // what we just read is, by definition, what the drawer already holds
+    dirty = false
+    watchWindow(get)
   },
 
   clearCanvas: () => {
@@ -885,7 +969,10 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   newFile: () => {
+    // the file you were on keeps its place in the drawer — this is a new one
+    flushSave(get)
     set({
+      docId: nanoid(8),
       fileName: "untitled scribbles",
       nodes: {},
       order: [],
@@ -896,7 +983,63 @@ export const useSquig = create<SquigState>((set, get) => ({
       past: [],
       future: [],
     })
-    scheduleSave(get)
+    flushSave(get)
+  },
+
+  openFile: (id) => {
+    if (id === get().docId) return
+    flushSave(get)
+    const doc = readFile(id)
+    if (!doc) {
+      // the index knew about it but the document itself is gone
+      set({ files: dropFile(id) })
+      return
+    }
+    const clean = sanitize(doc.nodes, doc.order)
+    set({
+      docId: doc.id,
+      fileName: doc.name,
+      nodes: clean.nodes,
+      order: clean.order,
+      selection: [],
+      viewport: { x: 0, y: 0, zoom: 1 },
+      renamingFile: false,
+      linkOpen: false,
+      panel: null,
+      past: [],
+      future: [],
+    })
+    // frame what's there, but never past life size — 400% on one small
+    // rectangle tells you nothing about where you've landed
+    if (clean.order.length) fitBox(set, clean.order.map((nid) => clean.nodes[nid]), 1)
+    // straight off the drawer, so there is nothing to write back yet
+    dirty = false
+    flushSave(get)
+  },
+
+  deleteFile: (id) => {
+    const files = dropFile(id)
+    set({ files })
+    if (id !== get().docId) return
+    // The file you had open just went away. Let go of it before landing
+    // somewhere else, or the save on the way out would write it right back.
+    set({
+      docId: nanoid(8),
+      fileName: "untitled scribbles",
+      nodes: {},
+      order: [],
+      selection: [],
+      past: [],
+      future: [],
+    })
+    const next = files[0]?.id
+    if (next) get().openFile(next)
+    else get().newFile()
+  },
+
+  saveNow: () => {
+    flushSave(get, true)
+    set((s) => ({ saveFlash: s.saveFlash + 1 }))
   },
 
   serialize: () => {
@@ -908,16 +1051,25 @@ export const useSquig = create<SquigState>((set, get) => ({
     try {
       const doc = JSON.parse(json)
       if (!doc || typeof doc !== "object" || !doc.nodes || !Array.isArray(doc.order)) return false
+      // an opened file joins the drawer as its own document, so importing
+      // never writes over whatever was on the canvas
+      flushSave(get)
+      const clean = sanitize(doc.nodes, doc.order)
       set({
+        docId: nanoid(8),
         fileName: typeof doc.fileName === "string" ? doc.fileName : "imported scribbles",
-        nodes: doc.nodes,
-        order: doc.order,
+        nodes: clean.nodes,
+        order: clean.order,
         selection: [],
         renamingFile: false,
         linkOpen: false,
         past: [],
         future: [],
       })
+      // an imported file was drawn wherever its author left it — go there,
+      // or the canvas looks empty when it isn't
+      if (clean.order.length) fitBox(set, clean.order.map((id) => clean.nodes[id]), 1)
+      else set({ viewport: { x: 0, y: 0, zoom: 1 } })
       scheduleSave(get)
       return true
     } catch {

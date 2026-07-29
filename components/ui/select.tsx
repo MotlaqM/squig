@@ -4,7 +4,7 @@ import * as React from "react"
 import { Select as SelectPrimitive } from "@base-ui/react/select"
 
 import { cn } from "@/lib/utils"
-import { CheckIcon, ChevronDownIcon } from "lucide-react"
+import { CaretDownIcon, CheckIcon } from "@phosphor-icons/react"
 
 function Select(props: React.ComponentProps<typeof SelectPrimitive.Root>) {
   return <SelectPrimitive.Root data-slot="select" {...props} />
@@ -40,7 +40,9 @@ function SelectTrigger({
     >
       {children}
       <SelectPrimitive.Icon
-        render={<ChevronDownIcon className="pointer-events-none size-3.5 shrink-0 text-muted-foreground" />}
+        render={
+          <CaretDownIcon className="pointer-events-none size-3.5 shrink-0 text-muted-foreground" weight="bold" />
+        }
       />
     </SelectPrimitive.Trigger>
   )
@@ -98,7 +100,7 @@ function SelectItem({ className, children, ...props }: React.ComponentProps<type
       {...props}
     >
       <SelectPrimitive.ItemIndicator className="pointer-events-none absolute right-2 flex size-4 items-center justify-center">
-        <CheckIcon className="size-3.5" />
+        <CheckIcon className="size-3.5" weight="bold" />
       </SelectPrimitive.ItemIndicator>
       <SelectPrimitive.ItemText>{children}</SelectPrimitive.ItemText>
     </SelectPrimitive.Item>

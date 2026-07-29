@@ -6,15 +6,16 @@
 // ---------------------------------------------------------------------------
 
 import {
-  AlignCenterHorizontal,
-  AlignCenterVertical,
-  AlignEndHorizontal,
-  AlignEndVertical,
-  AlignHorizontalDistributeCenter,
-  AlignStartHorizontal,
-  AlignStartVertical,
-  AlignVerticalDistributeCenter,
-} from "lucide-react"
+  AlignBottomSimpleIcon,
+  AlignCenterHorizontalSimpleIcon,
+  AlignCenterVerticalSimpleIcon,
+  AlignLeftSimpleIcon,
+  AlignRightSimpleIcon,
+  AlignTopSimpleIcon,
+  ArrowsOutLineHorizontalIcon,
+  ArrowsOutLineVerticalIcon,
+  type Icon as PhosphorIcon,
+} from "@phosphor-icons/react"
 
 import { useSquig } from "@/lib/store"
 import { cn } from "@/lib/utils"
@@ -22,13 +23,13 @@ import { IconAction } from "@/components/ui/segmented"
 
 type Edge = "left" | "hcenter" | "right" | "top" | "vcenter" | "bottom"
 
-const ALIGN: { edge: Edge; label: string; icon: typeof AlignStartVertical }[] = [
-  { edge: "left", label: "Align left", icon: AlignStartVertical },
-  { edge: "hcenter", label: "Align horizontal centres", icon: AlignCenterVertical },
-  { edge: "right", label: "Align right", icon: AlignEndVertical },
-  { edge: "top", label: "Align top", icon: AlignStartHorizontal },
-  { edge: "vcenter", label: "Align vertical centres", icon: AlignCenterHorizontal },
-  { edge: "bottom", label: "Align bottom", icon: AlignEndHorizontal },
+const ALIGN: { edge: Edge; label: string; icon: PhosphorIcon }[] = [
+  { edge: "left", label: "Align left", icon: AlignLeftSimpleIcon },
+  { edge: "hcenter", label: "Align horizontal centres", icon: AlignCenterVerticalSimpleIcon },
+  { edge: "right", label: "Align right", icon: AlignRightSimpleIcon },
+  { edge: "top", label: "Align top", icon: AlignTopSimpleIcon },
+  { edge: "vcenter", label: "Align vertical centres", icon: AlignCenterHorizontalSimpleIcon },
+  { edge: "bottom", label: "Align bottom", icon: AlignBottomSimpleIcon },
 ]
 
 export function AlignRow({ count, className }: { count: number; className?: string }) {
@@ -51,7 +52,7 @@ export function AlignRow({ count, className }: { count: number; className?: stri
         disabled={!canDistribute}
         onClick={() => st().distributeSelected("h")}
       >
-        <AlignHorizontalDistributeCenter className="size-3.5" />
+        <ArrowsOutLineHorizontalIcon className="size-3.5" />
       </IconAction>
       <IconAction
         className="size-ctl-sm"
@@ -59,7 +60,7 @@ export function AlignRow({ count, className }: { count: number; className?: stri
         disabled={!canDistribute}
         onClick={() => st().distributeSelected("v")}
       >
-        <AlignVerticalDistributeCenter className="size-3.5" />
+        <ArrowsOutLineVerticalIcon className="size-3.5" />
       </IconAction>
     </div>
   )

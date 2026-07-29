@@ -4,7 +4,7 @@ import * as React from "react"
 import { Menu } from "@base-ui/react/menu"
 
 import { cn } from "@/lib/utils"
-import { ChevronRightIcon } from "lucide-react"
+import { CaretRightIcon } from "@phosphor-icons/react"
 
 const POPUP =
   "min-w-52 origin-(--transform-origin) rounded-chrome-lg bg-popover p-1.5 text-popover-foreground shadow-popup ring-1 ring-foreground/10 outline-none transition-[transform,opacity] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
@@ -89,7 +89,7 @@ function DropdownMenuSubTrigger({ className, children, ...props }: React.Compone
   return (
     <Menu.SubmenuTrigger data-slot="dropdown-menu-sub-trigger" className={cn(ITEM, className)} {...props}>
       {children}
-      <ChevronRightIcon className="ml-auto size-3.5 text-muted-foreground" />
+      <CaretRightIcon className="ml-auto size-3.5 text-muted-foreground" weight="bold" />
     </Menu.SubmenuTrigger>
   )
 }
