@@ -28,10 +28,7 @@ export function RecentFiles() {
 
   return (
     <DropdownMenuSub>
-      <DropdownMenuSubTrigger>
-        Open recent
-        {files.length > 1 && <span className="ml-auto pl-2 text-xs text-muted-foreground">{files.length}</span>}
-      </DropdownMenuSubTrigger>
+      <DropdownMenuSubTrigger>Open recent</DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-72">
         {files.length === 0 ? (
           <p className="px-2 py-1.5 text-sm text-muted-foreground">nothing saved yet</p>

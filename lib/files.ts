@@ -17,8 +17,6 @@ export interface FileMeta {
   id: string
   name: string
   updatedAt: number
-  /** how many objects are on the canvas — shown as a hint, never trusted */
-  count: number
 }
 
 export interface StoredDoc {
@@ -101,7 +99,7 @@ export function readFile(id: string): StoredDoc | null {
  * forget the oldest documents — never the one in hand — and try again.
  */
 export function saveFile(doc: StoredDoc): FileMeta[] {
-  const meta: FileMeta = { id: doc.id, name: doc.name, updatedAt: doc.updatedAt, count: doc.order.length }
+  const meta: FileMeta = { id: doc.id, name: doc.name, updatedAt: doc.updatedAt }
   let index = [meta, ...listFiles().filter((f) => f.id !== doc.id)]
 
   // trim the tail first, so the common case never hits the quota at all
