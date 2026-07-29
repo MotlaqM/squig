@@ -38,7 +38,8 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
           <SketchPrims prims={prims} seed={13} />
         </g>
       </svg>
-      <span className="w-full truncate pb-0.5 text-center text-micro leading-none text-muted-foreground group-hover:text-foreground">
+      {/* a component's name, not a hint — it stays at label size */}
+      <span className="w-full truncate pb-0.5 text-center text-label leading-none text-muted-foreground group-hover:text-foreground">
         {def.name}
       </span>
     </button>
