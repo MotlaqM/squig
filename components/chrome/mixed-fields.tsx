@@ -152,13 +152,13 @@ function parseNumber(raw: string): number | null {
 // below so the two are pixel-identical and only their innards differ.
 
 const FIELD_BOX =
-  "flex h-7 min-w-0 items-center gap-1 rounded-md border border-input bg-transparent pr-1.5 pl-1 transition-colors hover:border-border focus-within:border-[var(--sq-ink)] focus-within:ring-2 focus-within:ring-[var(--sq-ink)]/15"
+  "flex h-ctl min-w-0 items-center gap-1.5 rounded-chrome-sm border border-input bg-transparent pr-2 pl-1.5 transition-colors hover:border-border focus-within:border-[var(--sq-ink)] focus-within:ring-2 focus-within:ring-[var(--sq-ink)]/15"
 
 const FIELD_INPUT =
-  "h-full w-full min-w-0 bg-transparent text-[11px] tabular-nums outline-none placeholder:text-muted-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+  "h-full w-full min-w-0 bg-transparent text-label tabular-nums outline-none placeholder:text-muted-foreground [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
 
 const FIELD_HANDLE =
-  "flex shrink-0 cursor-ew-resize items-center rounded px-1 py-0.5 text-[10px] leading-none text-muted-foreground/80 select-none hover:bg-accent hover:text-foreground"
+  "flex shrink-0 cursor-ew-resize items-center rounded-chrome-xs px-1 py-1 text-micro leading-none text-muted-foreground/80 select-none hover:bg-accent hover:text-foreground"
 
 /**
  * The drag target when a field has no axis letter to put there — font size,
@@ -399,7 +399,7 @@ export function MixedTextField({
   return (
     <CommitInput
       ariaLabel={ariaLabel}
-      className={cn("h-7 px-2 text-[11px]", className)}
+      className={cn("h-ctl rounded-chrome-sm px-2.5 text-label", className)}
       value={shared.mixed ? "" : shared.value}
       placeholder={shared.mixed ? MIXED_LABEL : placeholder}
       onCommit={(raw) => {

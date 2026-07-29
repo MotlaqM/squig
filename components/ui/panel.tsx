@@ -37,7 +37,7 @@ export function Panel({
     <div
       data-squig-chrome
       className={cn(
-        "flex flex-col overflow-hidden rounded-xl border border-border/80 bg-background shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-8px_rgb(0_0_0/0.12)]",
+        "flex flex-col overflow-hidden rounded-chrome-lg border border-border/80 bg-background shadow-panel",
         className
       )}
       // a press on chrome is never a press on the canvas
@@ -64,13 +64,13 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        "flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-3 py-2",
+        "flex shrink-0 items-center justify-between gap-2 border-b border-border/70 px-gutter py-3",
         className
       )}
     >
       <div className="min-w-0">
-        <h2 className="truncate text-[13px] leading-tight font-medium">{title}</h2>
-        {subtitle && <p className="mt-0.5 truncate text-[11px] leading-tight text-muted-foreground">{subtitle}</p>}
+        <h2 className="truncate text-row leading-tight font-medium">{title}</h2>
+        {subtitle && <p className="mt-1 truncate text-label leading-tight text-muted-foreground">{subtitle}</p>}
       </div>
       {right && <div className="flex shrink-0 items-center gap-0.5">{right}</div>}
     </div>
@@ -79,7 +79,7 @@ export function PanelHeader({
 
 export function PanelFooter({ className, children }: { className?: string; children: React.ReactNode }) {
   return (
-    <div className={cn("flex shrink-0 items-center gap-1.5 border-t border-border/70 p-2", className)}>{children}</div>
+    <div className={cn("flex shrink-0 items-center gap-2 border-t border-border/70 p-3", className)}>{children}</div>
   )
 }
 
@@ -145,16 +145,18 @@ export function PanelSection({
       onOpenChange={() => toggleSection(id)}
       className={cn("border-b border-border/60 last:border-b-0", className)}
     >
-      <div className="flex items-center gap-1 pr-2">
-        <Collapsible.Trigger className="group flex min-w-0 flex-1 items-center gap-1 py-1.5 pl-2 text-left outline-none">
+      <div className="flex items-center gap-1 pr-3">
+        {/* The title carries real weight and sits in the foreground colour, so
+            the eye lands on "Fill" before it lands on "Tone". A panel where the
+            headings are as quiet as the labels has no hierarchy at all — it
+            just has rows. */}
+        <Collapsible.Trigger className="group flex min-w-0 flex-1 items-center gap-1.5 px-gutter pt-gutter pb-2 text-left outline-none">
+          <span className="truncate text-label font-medium text-foreground">{title}</span>
+          {count !== undefined && <span className="text-micro text-muted-foreground tabular-nums">({count})</span>}
           <CaretRightIcon
             weight="bold"
-            className="size-2.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 group-data-[panel-open]:rotate-90"
+            className="ml-auto size-2.5 shrink-0 text-muted-foreground/60 transition-transform duration-150 group-data-[panel-open]:rotate-90"
           />
-          <span className="truncate text-[10px] font-medium tracking-[0.07em] text-muted-foreground uppercase">
-            {title}
-          </span>
-          {count !== undefined && <span className="text-[10px] text-muted-foreground/60 tabular-nums">({count})</span>}
         </Collapsible.Trigger>
         {right}
       </div>
@@ -162,7 +164,7 @@ export function PanelSection({
           property; the transition is ours to write. overflow-hidden matters —
           without it the rows spill out of the box while it collapses. */}
       <Collapsible.Panel className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-150 ease-[cubic-bezier(0.32,0.72,0,1)] data-starting-style:h-0 data-ending-style:h-0">
-        <div className="flex flex-col gap-1.5 px-2 pt-0.5 pb-2.5">{children}</div>
+        <div className="flex flex-col gap-row px-gutter pt-0.5 pb-4">{children}</div>
       </Collapsible.Panel>
     </Collapsible.Root>
   )
@@ -200,20 +202,20 @@ export function Row({
   className?: string
 }) {
   return (
-    <div className={cn("flex gap-2", align === "center" ? "items-center" : "items-start", className)}>
+    <div className={cn("flex gap-3", align === "center" ? "items-center" : "items-start", className)}>
       {label !== undefined && (
         <label
           htmlFor={htmlFor}
           className={cn(
-            "shrink-0 truncate text-[11px] text-muted-foreground select-none",
-            spread ? "flex-1" : "w-[54px]",
-            align === "start" && "pt-1.5"
+            "shrink-0 truncate text-label text-muted-foreground select-none",
+            spread ? "flex-1" : "w-label",
+            align === "start" && "pt-2"
           )}
         >
           {label}
         </label>
       )}
-      <div className={cn("flex items-center gap-1", spread ? "shrink-0" : "min-w-0 flex-1")}>{children}</div>
+      <div className={cn("flex items-center gap-1.5", spread ? "shrink-0" : "min-w-0 flex-1")}>{children}</div>
     </div>
   )
 }
@@ -229,8 +231,8 @@ export function StackRow({
   className?: string
 }) {
   return (
-    <div className={cn("flex flex-col gap-1", className)}>
-      {label !== undefined && <span className="text-[11px] text-muted-foreground select-none">{label}</span>}
+    <div className={cn("flex flex-col gap-1.5", className)}>
+      {label !== undefined && <span className="text-label text-muted-foreground select-none">{label}</span>}
       {children}
     </div>
   )
@@ -238,5 +240,5 @@ export function StackRow({
 
 /** Explanatory aside — grouping hints, empty states, "these don't share knobs". */
 export function PanelNote({ children, className }: { children: React.ReactNode; className?: string }) {
-  return <p className={cn("text-[11px] leading-relaxed text-muted-foreground", className)}>{children}</p>
+  return <p className={cn("text-label leading-relaxed text-muted-foreground", className)}>{children}</p>
 }

@@ -43,17 +43,17 @@ function Editor({ node: first }: { node: TextNode }) {
 
   return (
     <div
-      className="absolute z-40 flex items-center gap-1.5 rounded-xl border border-border/80 bg-background p-1 pl-2.5 shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-8px_rgb(0_0_0/0.12)]"
+      className="absolute z-40 flex items-center gap-2 rounded-chrome-lg border border-border/80 bg-background p-2 pl-3 shadow-popup"
       style={{ left: Math.max(8, left), top: Math.max(8, top) }}
       onPointerDown={(e) => e.stopPropagation()}
     >
-      <span className="text-[11px] text-muted-foreground">link</span>
+      <span className="text-label text-muted-foreground">link</span>
       <input
         ref={inputRef}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         placeholder="where does this go?"
-        className="h-7 w-56 bg-transparent px-1 text-xs outline-none placeholder:text-muted-foreground"
+        className="h-ctl w-56 bg-transparent px-1 text-label outline-none placeholder:text-muted-foreground"
         onKeyDown={(e) => {
           e.stopPropagation()
           if (e.key === "Enter") commit()
@@ -63,7 +63,7 @@ function Editor({ node: first }: { node: TextNode }) {
       <button
         type="button"
         onClick={commit}
-        className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        className="h-ctl rounded-chrome-sm px-2.5 text-label text-muted-foreground hover:bg-accent hover:text-foreground"
       >
         apply
       </button>
@@ -74,7 +74,7 @@ function Editor({ node: first }: { node: TextNode }) {
             st().setLinkOnSelection("")
             close()
           }}
-          className="rounded-lg px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-destructive"
+          className="h-ctl rounded-chrome-sm px-2.5 text-label text-muted-foreground hover:bg-accent hover:text-destructive"
         >
           remove
         </button>

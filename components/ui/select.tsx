@@ -29,10 +29,10 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "flex w-fit items-center justify-between gap-1.5 rounded-md border border-input bg-transparent py-2 pr-2 pl-2.5 whitespace-nowrap transition-colors outline-none select-none",
+        "flex w-fit items-center justify-between gap-1.5 rounded-chrome-sm border border-input bg-transparent py-2 pr-2 pl-2.5 text-label whitespace-nowrap transition-colors outline-none select-none",
         "hover:border-border focus-visible:border-[var(--sq-ink)] focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/15",
         "data-disabled:cursor-not-allowed data-disabled:opacity-50",
-        "data-[size=default]:h-8 data-[size=sm]:h-7",
+        "data-[size=default]:h-ctl-lg data-[size=sm]:h-ctl",
         "*:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5",
         className
       )}
@@ -62,7 +62,7 @@ function SelectContent({
         <SelectPrimitive.Popup
           data-slot="select-content"
           className={cn(
-            "max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 transition-[transform,opacity] duration-100",
+            "max-h-(--available-height) min-w-(--anchor-width) origin-(--transform-origin) overflow-y-auto rounded-chrome-md bg-popover p-1.5 text-popover-foreground shadow-popup ring-1 ring-foreground/10 transition-[transform,opacity] duration-100",
             "data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0",
             className
           )}
@@ -79,7 +79,7 @@ function SelectLabel({ className, ...props }: React.ComponentProps<typeof Select
   return (
     <SelectPrimitive.GroupLabel
       data-slot="select-label"
-      className={cn("px-1.5 py-1 text-xs text-muted-foreground", className)}
+      className={cn("px-2 py-1 text-label text-muted-foreground", className)}
       {...props}
     />
   )
@@ -90,7 +90,7 @@ function SelectItem({ className, children, ...props }: React.ComponentProps<type
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-1 pr-8 pl-1.5 text-sm outline-none select-none",
+        "relative flex h-ctl w-full cursor-default items-center gap-2 rounded-chrome-sm pr-8 pl-2 text-row outline-none select-none",
         "data-highlighted:bg-accent data-highlighted:text-accent-foreground",
         "data-disabled:pointer-events-none data-disabled:opacity-50",
         className

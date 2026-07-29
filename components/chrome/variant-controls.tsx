@@ -64,7 +64,7 @@ export function VariantControl({
     if (compact) {
       return (
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">{control.label}</span>
+          <span className="text-label text-muted-foreground">{control.label}</span>
           {field}
         </div>
       )
@@ -97,13 +97,13 @@ export function VariantControl({
         <SelectTrigger
           size="sm"
           aria-label={control.label}
-          className={compact ? "h-7 w-auto gap-1 px-2 text-[11px]" : "h-7 w-full text-[11px]"}
+          className={compact ? "h-ctl w-auto gap-1 px-2" : "h-ctl w-full"}
         >
           <SelectValue placeholder={MIXED_LABEL} />
         </SelectTrigger>
         <SelectContent>
           {options.map((o) => (
-            <SelectItem key={o} value={o} className="text-xs">
+            <SelectItem key={o} value={o}>
               {o}
             </SelectItem>
           ))}
@@ -133,7 +133,7 @@ export function VariantControl({
     if (compact) {
       return (
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] text-muted-foreground">{control.label}</span>
+          <span className="text-label text-muted-foreground">{control.label}</span>
           {field}
         </div>
       )

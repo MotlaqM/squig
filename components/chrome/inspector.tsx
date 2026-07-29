@@ -38,11 +38,11 @@ import { kbd } from "@/lib/shortcuts"
 function ToneChip({ fill, slash = false }: { fill?: string; slash?: boolean }) {
   return (
     <span
-      className="relative block size-3.5 rounded-[3px] border border-[var(--sq-faint)]"
+      className="relative block size-3.5 rounded-chrome-xs border border-[var(--sq-faint)]"
       style={{ background: fill ?? "transparent" }}
     >
       {slash && (
-        <span className="absolute inset-0 overflow-hidden rounded-[3px]">
+        <span className="absolute inset-0 overflow-hidden rounded-chrome-xs">
           <span className="absolute top-1/2 -left-1/4 h-px w-[150%] -translate-y-1/2 rotate-45 bg-[var(--sq-faint)]" />
         </span>
       )}
@@ -94,7 +94,7 @@ export function Inspector() {
           : selected[0].type
 
   return (
-    <Panel className="absolute top-4 right-4 z-30 max-h-[calc(100vh-2rem)] w-[248px]">
+    <Panel className="absolute top-4 right-4 z-30 max-h-[calc(100vh-2rem)] w-[272px]">
       <PanelHeader title={heading} subtitle={selected.length > 1 ? selectionSummary(selected) : undefined} />
 
       <ScrollArea className="min-h-0">
@@ -118,7 +118,7 @@ function EmptyState() {
 
   return (
     <>
-      <div className="border-b border-border/60 p-3">
+      <div className="border-b border-border/60 p-gutter">
         <PanelNote>
           drop a component, scribble a shape, make a mess. it&apos;s a wireframe, not the Sistine Chapel.
         </PanelNote>
@@ -181,7 +181,7 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
   return (
     <>
       {grouped && (
-        <div className="border-b border-border/60 px-3 py-2">
+        <div className="border-b border-border/60 px-gutter py-3">
           <PanelNote>
             grouped — {kbd("mod+click")} to reach one piece, {kbd("mod+shift+g")} to undo the grouping.
           </PanelNote>
@@ -279,7 +279,7 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
           <Row label="Link">
             <MixedTextField
               ariaLabel="Link"
-              placeholder="nowhere yet"
+              placeholder="https://…"
               shared={shared(texts.map((n) => n.link ?? ""))}
               onCommit={(v) => st().setLinkOnSelection(v)}
             />
@@ -289,7 +289,7 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
             <MixedNumberField
               label=""
               min={4}
-              className="w-[72px]"
+              className="w-[78px]"
               shared={sharedNumber(texts, (n) => (n as TextNode).fontSize)}
               onGestureStart={startGesture}
               onCommit={(v) =>
@@ -371,7 +371,7 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
             </PanelSection>
           )}
           {multi && !controls.length && (
-            <div className="p-3">
+            <div className="p-gutter">
               <PanelNote>
                 these components don&apos;t share any settings. select fewer kinds at once to tweak them.
               </PanelNote>
@@ -393,7 +393,7 @@ function Footer({ selected }: { selected: SquigNode[] }) {
   return (
     <PanelFooter>
       {components.length > 0 && (
-        <Button variant="outline" size="sm" className="h-7 flex-1 text-xs" onClick={() => st().detachSelected()}>
+        <Button variant="outline" size="sm" className="h-ctl flex-1 rounded-chrome-sm text-label" onClick={() => st().detachSelected()}>
           <Unlink className="size-3" /> Detach
           {components.length > 1 && <span className="tabular-nums">({components.length})</span>}
         </Button>
@@ -401,7 +401,7 @@ function Footer({ selected }: { selected: SquigNode[] }) {
       <Button
         variant="outline"
         size="sm"
-        className="h-7 flex-1 text-xs text-muted-foreground hover:text-destructive"
+        className="h-ctl flex-1 rounded-chrome-sm text-label text-muted-foreground hover:text-destructive"
         onClick={() => st().deleteSelected()}
       >
         <Trash2 className="size-3" /> Delete

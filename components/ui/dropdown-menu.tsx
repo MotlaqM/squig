@@ -7,10 +7,15 @@ import { cn } from "@/lib/utils"
 import { ChevronRightIcon } from "lucide-react"
 
 const POPUP =
-  "min-w-36 origin-(--transform-origin) rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 outline-none transition-[transform,opacity] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
+  "min-w-52 origin-(--transform-origin) rounded-chrome-lg bg-popover p-1.5 text-popover-foreground shadow-popup ring-1 ring-foreground/10 outline-none transition-[transform,opacity] duration-100 data-starting-style:scale-95 data-starting-style:opacity-0 data-ending-style:scale-95 data-ending-style:opacity-0"
 
+/**
+ * A menu row is a place to land, not a line of text — it gets a real height and
+ * real side padding, and the highlight is a soft pill inset from the popup edge
+ * rather than a full-bleed band.
+ */
 const ITEM =
-  "relative flex cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-sm outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
+  "relative flex h-ctl-lg cursor-default items-center gap-2.5 rounded-chrome-sm px-2.5 text-row outline-none select-none data-highlighted:bg-accent data-highlighted:text-accent-foreground data-disabled:pointer-events-none data-disabled:opacity-50"
 
 function DropdownMenu(props: React.ComponentProps<typeof Menu.Root>) {
   return <Menu.Root data-slot="dropdown-menu" {...props} />
@@ -24,7 +29,7 @@ function DropdownMenuContent({
   className,
   children,
   align = "start",
-  sideOffset = 6,
+  sideOffset = 8,
   finalFocus,
   ...props
 }: React.ComponentProps<typeof Menu.Popup> & {
@@ -62,7 +67,7 @@ function DropdownMenuItem({
 }
 
 function DropdownMenuSeparator({ className, ...props }: React.ComponentProps<"div">) {
-  return <div data-slot="dropdown-menu-separator" className={cn("-mx-1 my-1 h-px bg-border", className)} {...props} />
+  return <div data-slot="dropdown-menu-separator" className={cn("-mx-1.5 my-1.5 h-px bg-border", className)} {...props} />
 }
 
 /** Right-aligned hint — a shortcut, a file extension, a tick. */
@@ -70,7 +75,7 @@ function DropdownMenuShortcut({ className, ...props }: React.ComponentProps<"spa
   return (
     <span
       data-slot="dropdown-menu-shortcut"
-      className={cn("ml-auto text-xs tracking-widest text-muted-foreground", className)}
+      className={cn("ml-auto pl-6 text-label text-muted-foreground", className)}
       {...props}
     />
   )
@@ -113,7 +118,7 @@ function DropdownMenuLabel({ className, ...props }: React.ComponentProps<typeof 
   return (
     <Menu.GroupLabel
       data-slot="dropdown-menu-label"
-      className={cn("px-1.5 py-1 text-xs text-muted-foreground", className)}
+      className={cn("px-2.5 py-1.5 text-label text-muted-foreground", className)}
       {...props}
     />
   )

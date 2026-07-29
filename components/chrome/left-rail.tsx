@@ -41,7 +41,7 @@ function RailButton({
         aria-pressed={active}
         onClick={onClick}
         className={cn(
-          "flex size-9 items-center justify-center rounded-lg transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40",
+          "flex size-ctl-lg items-center justify-center rounded-chrome-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40",
           active
             ? "bg-[var(--sq-ink)] text-[var(--sq-paper)]"
             : "text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -51,7 +51,7 @@ function RailButton({
       </TooltipTrigger>
       <TooltipContent side="right" className="flex items-center gap-2">
         {label}
-        <kbd className="rounded bg-muted px-1 font-mono text-[10px] text-muted-foreground">{hotkey}</kbd>
+        <kbd className="rounded-chrome-xs bg-muted px-1 font-mono text-micro text-muted-foreground">{hotkey}</kbd>
       </TooltipContent>
     </Tooltip>
   )

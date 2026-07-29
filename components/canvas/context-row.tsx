@@ -33,7 +33,7 @@ const FILL_OPTIONS: readonly SegmentOption<FillTone>[] = (
   label,
   content: (
     <span
-      className="block size-3 rounded-[3px] border border-[var(--sq-faint)]"
+      className="block size-3 rounded-chrome-xs border border-[var(--sq-faint)]"
       style={{ background: bg ?? "transparent" }}
     />
   ),
@@ -130,7 +130,7 @@ export function ContextRow({
   }
 
   return (
-    <Panel ref={measure} className="absolute z-20 flex-row items-center gap-3 px-2.5 py-1.5" style={style}>
+    <Panel ref={measure} className="absolute z-20 flex-row items-center gap-3 px-2.5 py-2" style={style}>
       {multi && <AlignRow count={selectedNodes.length} />}
       {multi && (quick.length > 0 || showFill || showHead) && <span className="h-4 w-px bg-border" />}
 
@@ -151,7 +151,7 @@ export function ContextRow({
 
       {showHead && (
         <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">Arrowhead</span>
+          <span className="text-label text-muted-foreground">Arrowhead</span>
           <MixedSwitch
             ariaLabel="Arrowhead"
             shared={shared(arrows.map((n) => n.head))}

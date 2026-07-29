@@ -29,7 +29,7 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
       onClick={onPick}
       title={def.name}
       className={cn(
-        "group flex flex-col items-center gap-1 rounded-lg border border-border/70 p-1 transition-colors outline-none hover:border-border hover:bg-accent",
+        "group flex flex-col items-center gap-1 rounded-chrome-sm border border-border/70 p-1 transition-colors outline-none hover:border-border hover:bg-accent",
         active && "border-[var(--sq-ink)] bg-[var(--sq-ink)]/8 ring-1 ring-inset ring-[var(--sq-ink)]/25"
       )}
     >
@@ -38,7 +38,7 @@ function Preview({ def, active, onPick }: { def: ComponentDef; active: boolean; 
           <SketchPrims prims={prims} seed={13} />
         </g>
       </svg>
-      <span className="w-full truncate pb-0.5 text-center text-[11px] leading-none text-muted-foreground group-hover:text-foreground">
+      <span className="w-full truncate pb-0.5 text-center text-micro leading-none text-muted-foreground group-hover:text-foreground">
         {def.name}
       </span>
     </button>
@@ -71,15 +71,15 @@ function Library({ panel }: { panel: Exclude<PanelKind, null> }) {
   const first = sections[0]?.defs[0]
 
   return (
-    <Panel className="absolute top-1/2 left-16 z-30 max-h-[82vh] w-[300px] -translate-y-1/2">
-      <div className="relative shrink-0 border-b border-border/70 p-2.5">
-        <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-5 size-3.5 -translate-y-1/2 text-muted-foreground" />
+    <Panel className="absolute top-1/2 left-16 z-30 max-h-[82vh] w-[316px] -translate-y-1/2">
+      <div className="relative shrink-0 border-b border-border/70 p-3">
+        <MagnifyingGlassIcon className="pointer-events-none absolute top-1/2 left-[22px] size-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder={panel === "components" ? "find a component…" : "find a block…"}
-          className="h-8 pl-8 text-sm"
+          className="h-ctl-lg pl-9 text-row"
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === "Escape") st().setPanel(null)
@@ -92,10 +92,10 @@ function Library({ panel }: { panel: Exclude<PanelKind, null> }) {
           The scrollbar fades in while scrolling or hovering, so a list this
           long doesn't look like it ends at the fold. */}
       <ScrollArea className="min-h-0 flex-1 overscroll-contain">
-        <div className="p-2.5 pt-1">
+        <div className="p-3 pt-1.5">
           {sections.map((section) => (
-            <div key={section.group} className="mb-2">
-              <div className="px-0.5 py-1.5 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+            <div key={section.group} className="mb-3">
+              <div className="px-0.5 pt-2 pb-2 text-label font-medium text-foreground">
                 {section.group}
               </div>
               <div className="grid grid-cols-2 gap-1.5">
@@ -111,14 +111,14 @@ function Library({ panel }: { panel: Exclude<PanelKind, null> }) {
             </div>
           ))}
           {!total && (
-            <p className="py-8 text-center text-sm text-muted-foreground">
+            <p className="py-8 text-center text-row text-muted-foreground">
               nothing called &ldquo;{query}&rdquo; in here
             </p>
           )}
         </div>
       </ScrollArea>
 
-      <PanelFooter className="px-3 py-2 text-xs text-muted-foreground">
+      <PanelFooter className="px-gutter py-2.5 text-label text-muted-foreground">
         {placing ? "now click the canvas to drop it" : `${total} to choose from — ⌘K searches everything`}
       </PanelFooter>
     </Panel>

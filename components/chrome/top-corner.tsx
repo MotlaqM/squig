@@ -49,8 +49,10 @@ export function TopCorner() {
       <DropdownMenu>
         <DropdownMenuTrigger
           title="file menu"
-          className="flex items-center gap-1 rounded-lg px-2 py-1 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40"
+          className="flex items-center gap-1.5 rounded-chrome-sm px-2.5 py-1.5 outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40"
         >
+          {/* deliberately off the chrome type scale — this is the wordmark, not a
+              control, and it should out-weigh every label around it */}
           <span
             className="font-sans text-[17px] leading-none font-bold tracking-[-0.03em] select-none"
             style={{ color: "var(--sq-ink)" }}
@@ -159,14 +161,14 @@ export function ZoomPill() {
     <Panel className="absolute bottom-4 left-4 z-30 flex-row items-center gap-0.5 px-1 py-0.5">
       <button
         type="button"
-        className="size-7 rounded-lg text-sm text-muted-foreground hover:bg-accent"
+        className="size-ctl rounded-chrome-sm text-row text-muted-foreground hover:bg-accent"
         onClick={() => zoomBy(1 / 1.25)}
       >
         −
       </button>
       <button
         type="button"
-        className="min-w-11 rounded-lg px-1 py-1 text-center text-xs text-muted-foreground tabular-nums hover:bg-accent"
+        className="h-ctl min-w-12 rounded-chrome-sm px-1 text-center text-label text-muted-foreground tabular-nums hover:bg-accent"
         onClick={() => st().setViewport({ x: 0, y: 0, zoom: 1 })}
         title="reset view (⌘0)"
       >
@@ -174,7 +176,7 @@ export function ZoomPill() {
       </button>
       <button
         type="button"
-        className="size-7 rounded-lg text-sm text-muted-foreground hover:bg-accent"
+        className="size-ctl rounded-chrome-sm text-row text-muted-foreground hover:bg-accent"
         onClick={() => zoomBy(1.25)}
       >
         +
@@ -192,10 +194,10 @@ export function CommandHint() {
       onPointerDown={(e) => e.stopPropagation()}
       onClick={() => st().setCommandOpen(true)}
       data-squig-chrome
-      className="absolute bottom-4 left-1/2 z-30 flex -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-background px-3.5 py-1.5 text-xs text-muted-foreground shadow-[0_1px_2px_rgb(0_0_0/0.04),0_8px_24px_-8px_rgb(0_0_0/0.12)] hover:text-foreground"
+      className="absolute bottom-4 left-1/2 z-30 flex h-ctl -translate-x-1/2 items-center gap-2 rounded-full border border-border/80 bg-background px-gutter text-label text-muted-foreground shadow-panel hover:text-foreground"
     >
       search everything
-      <kbd className="inline-flex h-4 items-center rounded border bg-muted px-1 font-mono text-[10px]">⌘K</kbd>
+      <kbd className="inline-flex h-4 items-center rounded-chrome-xs border bg-muted px-1 font-mono text-micro">⌘K</kbd>
     </button>
   )
 }

@@ -49,6 +49,50 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
+/* ---------------------------------------------------------------------------
+   squig chrome scale — one vocabulary for every panel, field, menu and pill.
+
+   Nothing in components/ should hard-code a radius, a control height, a chrome
+   type size or an elevation. If a value here doesn't fit what you're building,
+   change this block rather than reaching for an arbitrary one: the drift that
+   made the panels look assembled rather than designed was seventeen
+   `rounded-lg`s, four heights and six type sizes, none of them agreeing.
+   --------------------------------------------------------------------------- */
+@theme {
+  /* Radius. Crisp rather than pill — the controls shouldn't be rounder than
+     the boxes people draw with them. Each step is the radius of the thing that
+     CONTAINS the step below it, so a segment nests inside a track cleanly. */
+  --radius-chrome-xs: 3px; /* a segment inside a track */
+  --radius-chrome-sm: 5px; /* fields, toggles, buttons, menu rows */
+  --radius-chrome-md: 7px; /* tracks, select popups */
+  --radius-chrome-lg: 10px; /* floating panels and menus */
+
+  /* Control height. `sm` is only for controls nested inside another control. */
+  --spacing-ctl-sm: 26px;
+  --spacing-ctl: 32px;
+  --spacing-ctl-lg: 36px;
+
+  /* Chrome type. Four sizes and that is the whole scale: a hint, a
+     label-or-value, a row of running text, a dialog heading. Canvas text is a
+     separate world — it uses --sq-font and is not governed here. The wordmark
+     is deliberately outside it too; it is brand, not a control. */
+  --text-micro: 11px;
+  --text-label: 12px;
+  --text-row: 13px;
+  --text-title: 15px; /* dialog headings and the ⌘K hero input */
+
+  /* Layout rhythm. The panel gutter, the gap between rows, and the seam every
+     label stops at so controls line up down one edge. */
+  --spacing-gutter: 14px;
+  --spacing-row: 10px;
+  --spacing-label: 60px;
+
+  /* Depth. Two elevations only: a panel resting on the canvas, and a popup
+     floating over a panel. */
+  --shadow-panel: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 24px -8px rgb(0 0 0 / 0.12);
+  --shadow-popup: 0 1px 2px rgb(0 0 0 / 0.04), 0 10px 32px -8px rgb(0 0 0 / 0.18);
+}
+
 /* squig canvas theme — overwritten at runtime by lib/theme.ts.
    These defaults are Internet blue, so first paint matches. */
 :root {

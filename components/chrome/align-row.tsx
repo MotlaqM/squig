@@ -40,12 +40,13 @@ export function AlignRow({ count, className }: { count: number; className?: stri
   return (
     <div className={cn("flex items-center gap-0.5", className)}>
       {ALIGN.map(({ edge, label, icon: Icon }) => (
-        <IconAction key={edge} label={label} onClick={() => st().alignSelected(edge)}>
+        <IconAction key={edge} className="size-ctl-sm" label={label} onClick={() => st().alignSelected(edge)}>
           <Icon className="size-3.5" />
         </IconAction>
       ))}
       <span className="mx-0.5 h-4 w-px bg-border" />
       <IconAction
+        className="size-ctl-sm"
         label={canDistribute ? "Distribute horizontally" : "Distribute needs 3 or more"}
         disabled={!canDistribute}
         onClick={() => st().distributeSelected("h")}
@@ -53,6 +54,7 @@ export function AlignRow({ count, className }: { count: number; className?: stri
         <AlignHorizontalDistributeCenter className="size-3.5" />
       </IconAction>
       <IconAction
+        className="size-ctl-sm"
         label={canDistribute ? "Distribute vertically" : "Distribute needs 3 or more"}
         disabled={!canDistribute}
         onClick={() => st().distributeSelected("v")}

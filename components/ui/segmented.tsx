@@ -33,7 +33,7 @@ const PRESSED = "bg-[var(--sq-ink)]/12 text-[var(--sq-ink)] ring-1 ring-inset ri
 const UNPRESSED = "text-muted-foreground hover:bg-accent hover:text-foreground"
 
 const SEGMENT =
-  "flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded-[5px] px-1.5 text-[11px] transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40 disabled:pointer-events-none disabled:opacity-40"
+  "flex h-ctl-sm min-w-0 flex-1 items-center justify-center gap-1 rounded-chrome-xs px-1.5 text-label transition-colors outline-none select-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40 disabled:pointer-events-none disabled:opacity-40"
 
 export interface SegmentOption<T extends string> {
   value: T
@@ -73,7 +73,7 @@ export function Segmented<T extends string>({
         if (picked !== undefined) onChange(picked)
       }}
       className={cn(
-        "flex w-full min-w-0 items-center gap-0.5 rounded-md border bg-muted/40 p-0.5",
+        "flex w-full min-w-0 items-center gap-0.5 rounded-chrome-md border bg-muted/40 p-[3px]",
         shared.mixed ? "border-dashed border-border" : "border-transparent",
         className
       )}
@@ -134,7 +134,7 @@ export function IconToggle({
       title={title}
       className={(state) =>
         cn(
-          "flex size-6.5 shrink-0 items-center justify-center rounded-md text-[11px] transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40 disabled:pointer-events-none disabled:opacity-35",
+          "flex size-ctl shrink-0 items-center justify-center rounded-chrome-sm text-label transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40 disabled:pointer-events-none disabled:opacity-35",
           state.pressed ? PRESSED : UNPRESSED,
           mixed && "border border-dashed border-border",
           className
@@ -174,7 +174,7 @@ export function IconAction({
       disabled={disabled}
       onClick={onClick}
       className={cn(
-        "flex size-6.5 shrink-0 items-center justify-center rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40",
+        "flex size-ctl shrink-0 items-center justify-center rounded-chrome-sm transition-colors outline-none focus-visible:ring-2 focus-visible:ring-[var(--sq-ink)]/40",
         disabled ? "cursor-not-allowed text-muted-foreground opacity-35" : UNPRESSED,
         className
       )}
