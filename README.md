@@ -31,9 +31,10 @@ one sheet. Enter drops it in the middle of your view.
 
 **Your files stay in your browser.** Every document autosaves as you draw, and
 the file menu keeps a list of the recent ones to open again. New file starts a
-new document rather than painting over the last one. No accounts, no cloud —
-which also means clearing site data clears the lot, so Export a copy
-(`⇧⌘S`) is there when a file matters.
+new document rather than painting over the last one. The drawer holds the last
+forty; past that, and when the browser runs out of room, the oldest ones go.
+No accounts, no cloud — which also means clearing site data clears the lot, so
+Export a copy (`⇧⌘S`) is there when a file matters.
 
 ## Keyboard
 

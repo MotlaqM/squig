@@ -8,6 +8,7 @@ import { getDef } from "./library/registry"
 import { breakApart } from "./library/break-apart"
 import { applyTheme, DEFAULT_FONT, DEFAULT_THEME, type FontMode, type ThemeName } from "./theme"
 import {
+  INDEX_KEY,
   deleteFile as dropFile,
   listFiles,
   loadPrefs,
@@ -219,9 +220,12 @@ function stepOrder(order: string[], ids: string[], dir: 1 | -1): string[] {
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+/** true between an edit and the write that records it */
+let dirty = false
 
 /** Every edit calls this; the drawer only gets written once the hand rests. */
 function scheduleSave(get: () => SquigState) {
+  dirty = true
   if (saveTimer) clearTimeout(saveTimer)
   saveTimer = setTimeout(() => flushSave(get), SAVE_DEBOUNCE_MS)
 }
@@ -229,6 +233,10 @@ function scheduleSave(get: () => SquigState) {
 /**
  * Write the current document to the drawer now. A blank canvas nobody has
  * touched stays out of the list — until `force`, which is a person asking.
+ *
+ * A canvas with nothing new on it writes nothing at all: a second tab may be
+ * holding a fresher copy of this same document, and an idle tab closing is no
+ * reason to hand it back an old one.
  */
 function flushSave(get: () => SquigState, force = false) {
   if (saveTimer) {
@@ -237,6 +245,7 @@ function flushSave(get: () => SquigState, force = false) {
   }
   const s = get()
   savePrefs({ theme: s.theme, font: s.font, contextRow: s.contextRow, activeId: s.docId })
+  if (!dirty && !force) return
   const known = s.files.some((f) => f.id === s.docId)
   if (!s.order.length && !known && !force) return
   const files = saveFile({
@@ -247,14 +256,18 @@ function flushSave(get: () => SquigState, force = false) {
     updatedAt: Date.now(),
   })
   useSquig.setState({ files })
+  dirty = false
 }
 
 let watching = false
 /**
  * A tab can close inside the debounce window. Catch it on the way out — and
  * on the way to the background, which is all iOS ever gives you.
+ *
+ * The same listener keeps an eye on the drawer itself, so a file made in
+ * another tab shows up in this one's recents without a reload.
  */
-function watchForExit(get: () => SquigState) {
+function watchWindow(get: () => SquigState) {
   if (watching || typeof window === "undefined") return
   watching = true
   const save = () => flushSave(get)
@@ -262,6 +275,9 @@ function watchForExit(get: () => SquigState) {
   window.addEventListener("pagehide", save)
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") save()
+  })
+  window.addEventListener("storage", (e) => {
+    if (e.key === INDEX_KEY) useSquig.setState({ files: listFiles() })
   })
 }
 
@@ -493,7 +509,9 @@ export const useSquig = create<SquigState>((set, get) => ({
       hydrated: true,
     })
     applyTheme(prefs.theme, prefs.font)
-    watchForExit(get)
+    // what we just read is, by definition, what the drawer already holds
+    dirty = false
+    watchWindow(get)
   },
 
   clearCanvas: () => {
@@ -777,6 +795,8 @@ export const useSquig = create<SquigState>((set, get) => ({
     // frame what's there, but never past life size — 400% on one small
     // rectangle tells you nothing about where you've landed
     if (doc.order.length) fitBox(set, doc.order.map((nid) => doc.nodes[nid]).filter(Boolean), 1)
+    // straight off the drawer, so there is nothing to write back yet
+    dirty = false
     flushSave(get)
   },
 
@@ -828,6 +848,11 @@ export const useSquig = create<SquigState>((set, get) => ({
         past: [],
         future: [],
       })
+      // an imported file was drawn wherever its author left it — go there,
+      // or the canvas looks empty when it isn't
+      const list = (doc.order as string[]).map((id: string) => doc.nodes[id]).filter(Boolean)
+      if (list.length) fitBox(set, list, 1)
+      else set({ viewport: { x: 0, y: 0, zoom: 1 } })
       scheduleSave(get)
       return true
     } catch {

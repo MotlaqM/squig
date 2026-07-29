@@ -459,6 +459,20 @@ export function Canvas() {
 
   // -- keyboard -------------------------------------------------------------
 
+  // ⌘S belongs to squig wherever the cursor is — mid-word, mid-rename, palette
+  // open. On the capture phase, because every field that swallows keystrokes
+  // sits downstream of here, and the browser's "save page" is never the point.
+  useEffect(() => {
+    const onSave = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.code !== "KeyS") return
+      e.preventDefault()
+      if (e.shiftKey) exportDoc()
+      else st().saveNow()
+    }
+    window.addEventListener("keydown", onSave, { capture: true })
+    return () => window.removeEventListener("keydown", onSave, { capture: true })
+  }, [st])
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
@@ -513,12 +527,6 @@ export function Canvas() {
           case "KeyD":
             e.preventDefault()
             s.duplicateSelected()
-            return
-          case "KeyS":
-            // squig saves as you draw; ⌘S is for the hand that needs to hear it
-            e.preventDefault()
-            if (e.shiftKey) exportDoc()
-            else s.saveNow()
             return
           case "KeyA":
             e.preventDefault()

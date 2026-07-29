@@ -35,7 +35,8 @@ export interface Prefs {
   activeId: string | null
 }
 
-const INDEX_KEY = "squig:files:v1"
+/** exported so another tab writing the drawer can be noticed */
+export const INDEX_KEY = "squig:files:v1"
 const PREFS_KEY = "squig:prefs:v1"
 const LEGACY_KEY = "squig:doc:v1"
 const fileKey = (id: string) => `squig:file:${id}`
