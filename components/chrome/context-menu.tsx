@@ -187,14 +187,14 @@ export function CanvasContextMenu() {
   return (
     <div
       ref={ref}
-      className="fixed z-50 min-w-[220px] rounded-xl border bg-background p-1 shadow-lg"
+      className="fixed z-50 min-w-52 rounded-chrome-lg border border-border/80 bg-background p-1.5 shadow-popup"
       style={{ left: pos.x, top: pos.y }}
       onPointerDown={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.preventDefault()}
     >
       {entries.map((entry, i) =>
         "separator" in entry ? (
-          <div key={i} className="my-1 h-px bg-border" />
+          <div key={i} className="-mx-1.5 my-1.5 h-px bg-border" />
         ) : (
           <button
             key={i}
@@ -203,7 +203,7 @@ export function CanvasContextMenu() {
               entry.run?.()
               close()
             }}
-            className={`group flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[13px] hover:bg-accent ${
+            className={`group flex h-ctl-lg w-full items-center gap-2.5 rounded-chrome-sm px-2.5 text-left text-row hover:bg-accent ${
               entry.danger ? "text-muted-foreground hover:text-destructive" : ""
             }`}
           >
@@ -212,7 +212,7 @@ export function CanvasContextMenu() {
               weight="fill"
             />
             <span className="flex-1 truncate">{entry.label}</span>
-            {entry.hint && <span className="pl-4 font-mono text-[10px] text-muted-foreground">{entry.hint}</span>}
+            {entry.hint && <span className="pl-6 font-mono text-label text-muted-foreground">{entry.hint}</span>}
           </button>
         )
       )}

@@ -14,7 +14,7 @@ import rough from "roughjs"
 import type { Options } from "roughjs/bin/core"
 import type { RoughGenerator } from "roughjs/bin/generator"
 import { INK, SHADE, mirrorPrims, type InkColor, type Prim, type PrimOpts } from "@/lib/sketch/kit"
-import type { SquigNode } from "@/lib/types"
+import { normalizeFill, type FillTone, type Outlined, type SquigNode, type StrokeWeight } from "@/lib/types"
 import { renderComponent } from "@/lib/library/registry"
 
 const gen: RoughGenerator = rough.generator()
@@ -290,15 +290,17 @@ export const SketchPrims = memo(function SketchPrims({ prims, seed }: { prims: P
 export const NodeSketch = memo(function NodeSketch({ node }: { node: SquigNode }) {
   const shapeKey = useMemo(() => {
     const flip = `${node.flipX ? 1 : 0}${node.flipY ? 1 : 0}`
+    // outline settings change the generated geometry, so they belong in the key
+    const pen = "stroke" in node ? `${node.stroke ?? ""}:${node.dashed ? 1 : 0}` : ""
     switch (node.type) {
       case "component":
         return `c:${node.kind}:${node.w}:${node.h}:${flip}:${JSON.stringify(node.props)}`
       case "shape":
-        return `s:${node.shape}:${node.w}:${node.h}:${flip}:${node.fill}`
+        return `s:${node.shape}:${node.w}:${node.h}:${flip}:${node.fill}:${pen}`
       case "draw":
-        return `d:${node.points.length}:${node.w}:${node.h}:${flip}:${node.points[0]?.join()}:${node.points.at(-1)?.join()}`
+        return `d:${node.points.length}:${node.w}:${node.h}:${flip}:${node.points[0]?.join()}:${node.points.at(-1)?.join()}:${pen}`
       case "arrow":
-        return `a:${node.w}:${node.h}:${flip}:${node.head}:${node.points.flat().join()}`
+        return `a:${node.w}:${node.h}:${flip}:${node.head}:${node.points.flat().join()}:${pen}`
       case "text":
         return `t:${node.text}:${node.fontSize}:${flip}:${node.bold ? 1 : 0}${node.italic ? 1 : 0}${node.underline || node.link ? 1 : 0}`
     }
@@ -313,25 +315,56 @@ export const NodeSketch = memo(function NodeSketch({ node }: { node: SquigNode }
   return <SketchPrims prims={prims} seed={node.seed} />
 })
 
+/**
+ * A shape's fill tone, as prim options.
+ *
+ * These reuse the component ladder rather than inventing a second one: `light`
+ * and `strong` are the same two shades every card and button prints with, so a
+ * filled scribble sits in the same tonal world as the library. `paper` is
+ * genuinely opaque — it's the tone you reach for when a box has to hide what
+ * it overlaps rather than tint it.
+ */
+const FILL_OPTS: Record<FillTone, PrimOpts | undefined> = {
+  none: undefined,
+  paper: { fill: "solid", fillColor: "paper" },
+  light: { fill: "shade", fillColor: "faint" },
+  strong: { fill: "shade", fillColor: "ink" },
+}
+
+/**
+ * Pen pressure, as a multiplier on whatever weight the mark draws at by
+ * default. A multiplier rather than three absolute widths because an arrow, a
+ * freehand line and a rectangle don't start from the same weight, and "heavy"
+ * should mean the same *relative* press on all three.
+ */
+const PEN_SCALE: Record<StrokeWeight, number> = { light: 0.65, regular: 1, heavy: 1.7 }
+
+/** Merge a node's outline settings into the options for one of its marks. */
+function outline(node: Outlined, baseWidth: number, o?: PrimOpts): PrimOpts {
+  return {
+    ...o,
+    strokeWidth: baseWidth * PEN_SCALE[node.stroke ?? "regular"],
+    dashed: node.dashed,
+  }
+}
+
 /** A node's prims before any flip is applied. */
 function basePrims(node: SquigNode): Prim[] {
   switch (node.type) {
     case "component":
       return renderComponent(node.kind, node.props, node.w, node.h)
-    case "shape":
-      if (node.shape === "ellipse")
-        return [
-          { t: "ellipse", x: 0, y: 0, w: node.w, h: node.h, o: node.fill ? { fill: "shade", fillColor: "ink" } : undefined },
-        ]
-      return [
-        { t: "rect", x: 0, y: 0, w: node.w, h: node.h, r: 6, o: node.fill ? { fill: "shade", fillColor: "ink" } : undefined },
-      ]
+    case "shape": {
+      const o = outline(node, HAND.strokeWidth, FILL_OPTS[normalizeFill(node.fill)])
+      if (node.shape === "ellipse") return [{ t: "ellipse", x: 0, y: 0, w: node.w, h: node.h, o }]
+      return [{ t: "rect", x: 0, y: 0, w: node.w, h: node.h, r: 6, o }]
+    }
     case "draw":
       // freehand is already the user's own line — barely roughen it
-      return [{ t: "poly", pts: node.points, o: { roughness: 0.2, strokeWidth: 1.9 } }]
+      return [{ t: "poly", pts: node.points, o: outline(node, 1.9, { roughness: 0.2 }) }]
     case "arrow": {
       const [[x1, y1], [x2, y2]] = node.points
-      const out: Prim[] = [{ t: "line", x1, y1, x2, y2, o: { strokeWidth: 1.6 } }]
+      const o = outline(node, 1.6)
+      const out: Prim[] = [{ t: "line", x1, y1, x2, y2, o }]
       if (node.head) {
         const a = Math.atan2(y2 - y1, x2 - x1)
         const L = 12
@@ -342,7 +375,8 @@ function basePrims(node: SquigNode): Prim[] {
             [x2, y2],
             [x2 - L * Math.cos(a + 0.45), y2 - L * Math.sin(a + 0.45)],
           ],
-          o: { strokeWidth: 1.6 },
+          // a dashed arrowhead reads as a rendering fault, not a style
+          o: { ...o, dashed: false },
         })
       }
       return out

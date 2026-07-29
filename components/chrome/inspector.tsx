@@ -1,72 +1,148 @@
 "use client"
 
 // ---------------------------------------------------------------------------
-// Inspector — deliberately small. Position, variants, text. That's it.
-// If this ever looks like Figma's panel, something has gone wrong.
+// Inspector — the panel that edits whatever is selected.
 //
-// It edits a selection, never "the selected node". One node is a selection of
+// It edits a *selection*, never "the selected node". One node is a selection of
 // one; anything the selection disagrees on shows a dash you can type over.
+//
+// The layout borrows a design tool's grammar — folding sections, one alignment
+// seam every control lands on, scrubbable numbers — but not a design tool's
+// appetite. Sections appear only when the selection has something for them to
+// edit, so a scribble shows Position, Fill and Outline and nothing else. If you
+// ever find yourself adding a section that's usually empty, it belongs
+// somewhere else.
 // ---------------------------------------------------------------------------
 
 import { useSquig } from "@/lib/store"
-import type { SquigNode, ComponentNode, ShapeNode, ArrowNode, TextNode } from "@/lib/types"
+import type { ArrowNode, ComponentNode, FillTone, ShapeNode, SquigNode, StrokeWeight, TextNode } from "@/lib/types"
+import { normalizeFill } from "@/lib/types"
 import { getDef } from "@/lib/library/registry"
 import { selectionSummary, shared, sharedControls, sharedNumber, unionBounds } from "@/lib/selection"
 import { scaleNodes, MIN_SIZE } from "@/lib/canvas/transform"
 import { VariantControl } from "./variant-controls"
 import { MixedNumberField, MixedSwitch, MixedTextField } from "./mixed-fields"
 import { AlignRow } from "./align-row"
-import { Label } from "@/components/ui/label"
+import { Panel, PanelFooter, PanelHeader, PanelNote, PanelSection, Row, StackRow } from "@/components/ui/panel"
+import { IconAction, IconToggle, Segmented, type SegmentOption } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { LinkBreakIcon, LinkSimpleIcon, TrashIcon } from "@phosphor-icons/react"
+import {
+  FlipHorizontalIcon,
+  FlipVerticalIcon,
+  LinkBreakIcon,
+  TextBIcon,
+  TextItalicIcon,
+  TextUnderlineIcon,
+  TrashIcon,
+} from "@phosphor-icons/react"
 import { kbd } from "@/lib/shortcuts"
+
+// ---------------------------------------------------------------------------
+// Option sets. Declared out here so they aren't rebuilt on every keystroke.
+
+/** A tone chip, drawn from the live palette so it previews the actual ink. */
+function ToneChip({ fill, slash = false }: { fill?: string; slash?: boolean }) {
+  return (
+    <span
+      className="relative block size-3.5 rounded-chrome-xs border border-[var(--sq-faint)]"
+      style={{ background: fill ?? "transparent" }}
+    >
+      {slash && (
+        <span className="absolute inset-0 overflow-hidden rounded-chrome-xs">
+          <span className="absolute top-1/2 -left-1/4 h-px w-[150%] -translate-y-1/2 rotate-45 bg-[var(--sq-faint)]" />
+        </span>
+      )}
+    </span>
+  )
+}
+
+const FILL_OPTIONS: readonly SegmentOption<FillTone>[] = [
+  { value: "none", label: "No fill", content: <ToneChip slash /> },
+  { value: "paper", label: "Paper — opaque, hides what's behind", content: <ToneChip fill="var(--sq-paper)" /> },
+  { value: "light", label: "Light shade", content: <ToneChip fill="var(--sq-shade)" /> },
+  { value: "strong", label: "Strong shade", content: <ToneChip fill="var(--sq-shade-strong)" /> },
+]
+
+/** A pen-weight chip — the actual relative widths, not three identical bars. */
+function PenChip({ height }: { height: number }) {
+  return <span className="block w-4 rounded-full bg-current" style={{ height }} />
+}
+
+const STROKE_OPTIONS: readonly SegmentOption<StrokeWeight>[] = [
+  { value: "light", label: "Light pen", content: <PenChip height={1} /> },
+  { value: "regular", label: "Regular pen", content: <PenChip height={1.75} /> },
+  { value: "heavy", label: "Heavy pen", content: <PenChip height={3} /> },
+]
+
+/** Drawn as icons, not as styled letters — a glyph small enough to fit the
+    toggle is too small to read as bold-versus-regular at a glance. */
+const TEXT_STYLES = [
+  { key: "bold", label: "Bold", icon: TextBIcon },
+  { key: "italic", label: "Italic", icon: TextItalicIcon },
+  { key: "underline", label: "Underline", icon: TextUnderlineIcon },
+] as const
+
+// ---------------------------------------------------------------------------
 
 export function Inspector() {
   const nodes = useSquig((s) => s.nodes)
   const selection = useSquig((s) => s.selection)
-  const contextRow = useSquig((s) => s.contextRow)
-  const st = useSquig.getState
 
   const selected = selection.map((id) => nodes[id]).filter(Boolean) as SquigNode[]
 
+  const heading =
+    selected.length === 0
+      ? "nothing selected"
+      : selected.length > 1
+        ? `${selected.length} selected`
+        : selected[0].type === "component"
+          ? (getDef((selected[0] as ComponentNode).kind)?.name ?? (selected[0] as ComponentNode).kind)
+          : selected[0].type
+
   return (
-    <div
-      data-squig-chrome
-      className="absolute top-4 right-4 z-30 flex max-h-[calc(100vh-2rem)] w-[232px] flex-col overflow-hidden rounded-xl border bg-background shadow-md"
-      onPointerDown={(e) => e.stopPropagation()}
-    >
+    <Panel className="absolute top-4 right-4 z-30 max-h-[calc(100vh-2rem)] w-[272px]">
+      <PanelHeader title={heading} subtitle={selected.length > 1 ? selectionSummary(selected) : undefined} />
+
       <ScrollArea className="min-h-0">
         {/* remounting on a selection change drops any half-typed draft, which
             is what you want — the field now describes different objects */}
-        <div key={selection.join(",")} className="flex flex-col gap-4 p-3.5">
-          {!selected.length ? (
-            <>
-              <div>
-                <h3 className="text-sm font-medium">nothing selected</h3>
-                <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  drop a component, scribble a shape, make a mess. it&apos;s a wireframe, not the Sistine Chapel.
-                </p>
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <Label className="text-xs font-normal">Context menu</Label>
-                  <p className="text-[11px] text-muted-foreground">quick controls above selection</p>
-                </div>
-                <Switch checked={contextRow} onCheckedChange={(on) => st().setContextRow(on)} className="scale-90" />
-              </div>
-            </>
-          ) : (
-            <SelectionEditor selected={selected} />
-          )}
+        <div key={selection.join(",")} className="flex flex-col">
+          {selected.length ? <SelectionEditor selected={selected} /> : <EmptyState />}
         </div>
       </ScrollArea>
 
       {selected.length > 0 && <Footer selected={selected} />}
-    </div>
+    </Panel>
+  )
+}
+
+// ---------------------------------------------------------------------------
+
+function EmptyState() {
+  const contextRow = useSquig((s) => s.contextRow)
+  const st = useSquig.getState
+
+  return (
+    <>
+      <div className="border-b border-border/60 p-gutter">
+        <PanelNote>
+          drop a component, scribble a shape, make a mess. it&apos;s a wireframe, not the Sistine Chapel.
+        </PanelNote>
+      </div>
+      <PanelSection id="settings" title="Settings">
+        <Row spread label="Context menu">
+          <Switch
+            checked={contextRow}
+            aria-label="Context menu"
+            onCheckedChange={(on) => st().setContextRow(on)}
+            className="scale-90"
+          />
+        </Row>
+        <PanelNote>quick controls float above the selection</PanelNote>
+      </PanelSection>
+    </>
   )
 }
 
@@ -76,195 +152,240 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
   const st = useSquig.getState
   const multi = selected.length > 1
 
-  const patchAll = (make: (n: SquigNode) => Partial<SquigNode> | null) => {
+  /**
+   * Apply a patch to every node that wants one.
+   *
+   * `checkpoint: false` is for controls that stream — a scrub takes a single
+   * checkpoint when the drag starts and then writes freely, so asking for one
+   * per pixel would bury the undo stack.
+   */
+  const patch = (make: (n: SquigNode) => Partial<SquigNode> | null, opts?: { checkpoint?: boolean }) => {
     const patches: Record<string, Partial<SquigNode>> = {}
     for (const n of selected) {
       const p = make(n)
       if (p) patches[n.id] = p
     }
-    if (Object.keys(patches).length) st().updateNodes(patches, { checkpoint: true })
+    if (Object.keys(patches).length) st().updateNodes(patches, { checkpoint: opts?.checkpoint ?? true })
   }
+  const live = (make: (n: SquigNode) => Partial<SquigNode> | null) => patch(make, { checkpoint: false })
+  const startGesture = () => st().checkpoint()
 
   const grouped = selected.some((n) => n.groupIds?.length)
   const components = selected.filter((n): n is ComponentNode => n.type === "component")
   const shapes = selected.filter((n): n is ShapeNode => n.type === "shape")
   const arrows = selected.filter((n): n is ArrowNode => n.type === "arrow")
   const texts = selected.filter((n): n is TextNode => n.type === "text")
+  // components draw their own strokes from authored prims — a pen weight set
+  // here would have nothing to apply to without rewriting the whole library
+  const outlined = selected.filter((n) => n.type === "shape" || n.type === "draw" || n.type === "arrow")
 
   const controls = components.length === selected.length ? sharedControls(components) : []
   const variantControls = controls.filter((c) => c.type !== "text")
   const textControls = controls.filter((c) => c.type === "text")
 
-  const heading = multi
-    ? `${selected.length} selected`
-    : selected[0].type === "component"
-      ? (getDef((selected[0] as ComponentNode).kind)?.name ?? (selected[0] as ComponentNode).kind)
-      : selected[0].type
+  /** Only worth printing a count when the section misses part of the selection. */
+  const partial = (n: number) => (n === selected.length ? undefined : n)
 
   return (
     <>
-      <div>
-        <h3 className="text-sm font-medium">{heading}</h3>
-        {multi && <p className="mt-0.5 text-[11px] text-muted-foreground">{selectionSummary(selected)}</p>}
-      </div>
-
       {grouped && (
-        <p className="text-[11px] leading-relaxed text-muted-foreground">
-          grouped — {kbd("mod+click")} to reach one piece, {kbd("mod+shift+g")} to undo the grouping.
-        </p>
-      )}
-
-      {/* position & size — a dash means they disagree; type to make them agree.
-          Typing sets every node to that value (Figma does the same); arrow keys
-          nudge each from its own, so a mixed field stays mixed. */}
-      <div className="grid grid-cols-2 gap-1.5">
-        <MixedNumberField
-          label="x"
-          shared={sharedNumber(selected, (n) => n.x)}
-          onCommit={(v) => patchAll(() => ({ x: v }))}
-          onStep={(d) => patchAll((n) => ({ x: n.x + d }))}
-        />
-        <MixedNumberField
-          label="y"
-          shared={sharedNumber(selected, (n) => n.y)}
-          onCommit={(v) => patchAll(() => ({ y: v }))}
-          onStep={(d) => patchAll((n) => ({ y: n.y + d }))}
-        />
-        <MixedNumberField
-          label="w"
-          shared={sharedNumber(selected, (n) => n.w)}
-          onCommit={(v) => patchAll((n) => resizeTo(n, Math.max(MIN_SIZE, v), n.h))}
-          onStep={(d) => patchAll((n) => resizeTo(n, Math.max(MIN_SIZE, n.w + d), n.h))}
-        />
-        <MixedNumberField
-          label="h"
-          shared={sharedNumber(selected, (n) => n.h)}
-          onCommit={(v) => patchAll((n) => resizeTo(n, n.w, Math.max(MIN_SIZE, v)))}
-          onStep={(d) => patchAll((n) => resizeTo(n, n.w, Math.max(MIN_SIZE, n.h + d)))}
-        />
-      </div>
-
-      {multi && (
-        <div className="flex flex-col gap-1.5">
-          <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Arrange</span>
-          <AlignRow count={selected.length} />
+        <div className="border-b border-border/60 px-gutter py-3">
+          <PanelNote>
+            grouped — {kbd("mod+click")} to reach one piece, {kbd("mod+shift+g")} to undo the grouping.
+          </PanelNote>
         </div>
       )}
 
-      {/* component variants, intersected across whatever is selected */}
-      {components.length > 0 && components.length === selected.length && (
-        <>
-          {variantControls.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Variant</span>
-              {variantControls.map((c) => (
-                <VariantControl key={c.key} nodes={components} control={c} />
-              ))}
-            </div>
-          )}
-          {textControls.length > 0 && (
-            <div className="flex flex-col gap-2">
-              <span className="text-[11px] font-medium tracking-wide text-muted-foreground uppercase">Text</span>
-              {textControls.map((c) => (
-                <VariantControl key={c.key} nodes={components} control={c} />
-              ))}
-            </div>
-          )}
-          {multi && !controls.length && (
-            <p className="text-[11px] leading-relaxed text-muted-foreground">
-              these components don&apos;t share any settings. select fewer kinds at once to tweak them.
-            </p>
-          )}
-        </>
-      )}
-
-      {/* mixed bags still get the knobs that apply to part of the selection */}
-      {shapes.length > 0 && (
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-normal text-muted-foreground">
-            Fill{shapes.length !== selected.length && ` (${shapes.length})`}
-          </Label>
-          <MixedSwitch
-            ariaLabel="Fill"
-            shared={shared(shapes.map((n) => n.fill))}
-            onChange={(on) => patchAll((n) => (n.type === "shape" ? ({ fill: on } as Partial<SquigNode>) : null))}
+      {/* Position & size — a dash means they disagree; type to make them agree.
+          Typing sets every node to that value (Figma does the same); scrubbing
+          and arrow keys nudge each from its own, so a mixed field stays mixed. */}
+      <PanelSection id="position" title="Position">
+        <div className="grid grid-cols-2 gap-1.5">
+          <MixedNumberField
+            label="X"
+            shared={sharedNumber(selected, (n) => n.x)}
+            onGestureStart={startGesture}
+            onCommit={(v) => live(() => ({ x: v }))}
+            onStep={(d) => live((n) => ({ x: n.x + d }))}
+          />
+          <MixedNumberField
+            label="Y"
+            shared={sharedNumber(selected, (n) => n.y)}
+            onGestureStart={startGesture}
+            onCommit={(v) => live(() => ({ y: v }))}
+            onStep={(d) => live((n) => ({ y: n.y + d }))}
+          />
+          <MixedNumberField
+            label="W"
+            min={MIN_SIZE}
+            shared={sharedNumber(selected, (n) => n.w)}
+            onGestureStart={startGesture}
+            onCommit={(v) => live((n) => resizeTo(n, Math.max(MIN_SIZE, v), n.h))}
+            onStep={(d) => live((n) => resizeTo(n, Math.max(MIN_SIZE, n.w + d), n.h))}
+          />
+          <MixedNumberField
+            label="H"
+            min={MIN_SIZE}
+            shared={sharedNumber(selected, (n) => n.h)}
+            onGestureStart={startGesture}
+            onCommit={(v) => live((n) => resizeTo(n, n.w, Math.max(MIN_SIZE, v)))}
+            onStep={(d) => live((n) => resizeTo(n, n.w, Math.max(MIN_SIZE, n.h + d)))}
           />
         </div>
-      )}
 
-      {arrows.length > 0 && (
-        <div className="flex items-center justify-between">
-          <Label className="text-xs font-normal text-muted-foreground">
-            Arrowhead{arrows.length !== selected.length && ` (${arrows.length})`}
-          </Label>
-          <MixedSwitch
-            ariaLabel="Arrowhead"
-            shared={shared(arrows.map((n) => n.head))}
-            onChange={(on) => patchAll((n) => (n.type === "arrow" ? ({ head: on } as Partial<SquigNode>) : null))}
-          />
-        </div>
-      )}
+        {/* eight icons don't fit beside a label column, so alignment takes the
+            full width and flipping — which is always available — keeps the row */}
+        {multi && (
+          <StackRow label="Align">
+            <AlignRow count={selected.length} className="justify-between" />
+          </StackRow>
+        )}
 
+        <Row label="Flip">
+          <IconAction label={`Flip horizontally · ${kbd("shift+h")}`} onClick={() => st().flipSelected("x")}>
+            <FlipHorizontalIcon className="size-3.5" />
+          </IconAction>
+          <IconAction label={`Flip vertically · ${kbd("shift+v")}`} onClick={() => st().flipSelected("y")}>
+            <FlipVerticalIcon className="size-3.5" />
+          </IconAction>
+        </Row>
+      </PanelSection>
+
+      {/* --- contextual: text ------------------------------------------- */}
       {texts.length > 0 && (
-        <div className="flex flex-col gap-2">
-          <div className="flex flex-col gap-1">
-            <Label className="text-xs font-normal text-muted-foreground">
-              Text{texts.length !== selected.length && ` (${texts.length})`}
-            </Label>
+        <PanelSection id="text" title="Text" count={partial(texts.length)}>
+          <StackRow>
             <MixedTextField
+              ariaLabel="Text"
               shared={shared(texts.map((n) => n.text))}
-              onCommit={(v) =>
-                patchAll((n) => (n.type === "text" ? (reflowText(n, v, n.fontSize) as Partial<SquigNode>) : null))
-              }
+              onCommit={(v) => patch((n) => (n.type === "text" ? (reflowText(n, v, n.fontSize) as Partial<SquigNode>) : null))}
             />
-          </div>
-          <div className="flex items-center gap-1">
-            {(["bold", "italic", "underline"] as const).map((style) => {
-              const on = shared(texts.map((n) => !!n[style]))
+          </StackRow>
+
+          <Row label="Style">
+            {TEXT_STYLES.map(({ key, label, icon: Icon }) => {
+              const on = shared(texts.map((n) => !!n[key]))
               return (
-                <StyleToggle
-                  key={style}
-                  label={style[0].toUpperCase() + style.slice(1)}
-                  hint={kbd(`mod+${style[0]}`)}
-                  on={!on.mixed && on.value}
+                <IconToggle
+                  key={key}
+                  label={label}
+                  hint={kbd(`mod+${key[0]}`)}
+                  pressed={!on.mixed && on.value}
                   mixed={on.mixed}
-                  onClick={() => st().toggleTextStyle(style)}
+                  onPressedChange={() => st().toggleTextStyle(key)}
                 >
-                  <span className={style === "bold" ? "font-bold" : style === "italic" ? "font-serif italic" : "underline"}>
-                    {style[0].toUpperCase()}
-                  </span>
-                </StyleToggle>
+                  <Icon className="size-4" />
+                </IconToggle>
               )
             })}
-            <StyleToggle
-              label="Link"
-              hint={kbd("mod+k")}
-              on={texts.every((n) => !!n.link)}
-              mixed={shared(texts.map((n) => !!n.link)).mixed}
-              onClick={() => st().setLinkOpen(true)}
-            >
-              <LinkSimpleIcon className="size-3.5" />
-            </StyleToggle>
-          </div>
+          </Row>
 
-          <div className="flex items-center justify-between gap-2">
-            <Label className="shrink-0 text-xs font-normal text-muted-foreground">Size</Label>
+          {/* A link is a value, not a mode — so it gets a field showing where
+              the text actually points. Empty means it points nowhere, and
+              clearing the field is how you unlink. ⌘K still opens the floating
+              editor over the canvas for the same value. */}
+          <Row label="Link">
+            <MixedTextField
+              ariaLabel="Link"
+              placeholder="https://…"
+              shared={shared(texts.map((n) => n.link ?? ""))}
+              onCommit={(v) => st().setLinkOnSelection(v)}
+            />
+          </Row>
+
+          <Row label="Size">
             <MixedNumberField
-              compact
               label=""
-              className="w-[70px]"
+              min={4}
+              className="w-[78px]"
               shared={sharedNumber(texts, (n) => (n as TextNode).fontSize)}
+              onGestureStart={startGesture}
               onCommit={(v) =>
-                patchAll((n) => (n.type === "text" && v > 0 ? (reflowText(n, n.text, v) as Partial<SquigNode>) : null))
+                live((n) => (n.type === "text" && v > 0 ? (reflowText(n, n.text, v) as Partial<SquigNode>) : null))
               }
               onStep={(d) =>
-                patchAll((n) =>
+                live((n) =>
                   n.type === "text" ? (reflowText(n, n.text, Math.max(4, n.fontSize + d)) as Partial<SquigNode>) : null
                 )
               }
             />
-          </div>
-        </div>
+          </Row>
+        </PanelSection>
+      )}
+
+      {/* --- contextual: fill ------------------------------------------- */}
+      {shapes.length > 0 && (
+        <PanelSection id="fill" title="Fill" count={partial(shapes.length)}>
+          <Row label="Tone">
+            <Segmented
+              ariaLabel="Fill tone"
+              options={FILL_OPTIONS}
+              shared={shared(shapes.map((n) => normalizeFill(n.fill)))}
+              onChange={(tone) => patch((n) => (n.type === "shape" ? ({ fill: tone } as Partial<SquigNode>) : null))}
+            />
+          </Row>
+        </PanelSection>
+      )}
+
+      {/* --- contextual: outline ---------------------------------------- */}
+      {outlined.length > 0 && (
+        <PanelSection id="outline" title="Outline" count={partial(outlined.length)}>
+          <Row label="Pen">
+            <Segmented
+              ariaLabel="Pen weight"
+              options={STROKE_OPTIONS}
+              shared={shared(outlined.map((n) => ("stroke" in n ? (n.stroke ?? "regular") : "regular")))}
+              onChange={(weight) => patch((n) => (isOutlined(n) ? ({ stroke: weight } as Partial<SquigNode>) : null))}
+            />
+          </Row>
+          <Row spread label="Dashed">
+            <MixedSwitch
+              ariaLabel="Dashed"
+              shared={shared(outlined.map((n) => ("dashed" in n ? !!n.dashed : false)))}
+              onChange={(on) => patch((n) => (isOutlined(n) ? ({ dashed: on } as Partial<SquigNode>) : null))}
+            />
+          </Row>
+        </PanelSection>
+      )}
+
+      {/* --- contextual: arrows ------------------------------------------ */}
+      {arrows.length > 0 && (
+        <PanelSection id="arrow" title="Arrow" count={partial(arrows.length)}>
+          <Row spread label="Head">
+            <MixedSwitch
+              ariaLabel="Arrowhead"
+              shared={shared(arrows.map((n) => n.head))}
+              onChange={(on) => patch((n) => (n.type === "arrow" ? ({ head: on } as Partial<SquigNode>) : null))}
+            />
+          </Row>
+        </PanelSection>
+      )}
+
+      {/* --- contextual: component variants ------------------------------ */}
+      {components.length > 0 && components.length === selected.length && (
+        <>
+          {variantControls.length > 0 && (
+            <PanelSection id="variant" title="Variant">
+              {variantControls.map((c) => (
+                <VariantControl key={c.key} nodes={components} control={c} />
+              ))}
+            </PanelSection>
+          )}
+          {textControls.length > 0 && (
+            <PanelSection id="content" title="Content">
+              {textControls.map((c) => (
+                <VariantControl key={c.key} nodes={components} control={c} />
+              ))}
+            </PanelSection>
+          )}
+          {multi && !controls.length && (
+            <div className="p-gutter">
+              <PanelNote>
+                these components don&apos;t share any settings. select fewer kinds at once to tweak them.
+              </PanelNote>
+            </div>
+          )}
+        </>
       )}
     </>
   )
@@ -278,9 +399,9 @@ function Footer({ selected }: { selected: SquigNode[] }) {
   const components = selected.filter((n) => n.type === "component" && n.kind !== "icon")
 
   return (
-    <div className="flex shrink-0 gap-1.5 border-t p-2.5">
+    <PanelFooter>
       {components.length > 0 && (
-        <Button variant="outline" size="sm" className="h-7 flex-1 text-xs" onClick={() => st().detachSelected()}>
+        <Button variant="outline" size="sm" className="h-ctl flex-1 rounded-chrome-sm text-label" onClick={() => st().detachSelected()}>
           <LinkBreakIcon className="size-3" /> Detach
           {components.length > 1 && <span className="tabular-nums">({components.length})</span>}
         </Button>
@@ -288,16 +409,21 @@ function Footer({ selected }: { selected: SquigNode[] }) {
       <Button
         variant="outline"
         size="sm"
-        className="h-7 flex-1 text-xs text-muted-foreground hover:text-destructive"
+        className="h-ctl flex-1 rounded-chrome-sm text-label text-muted-foreground hover:text-destructive"
         onClick={() => st().deleteSelected()}
       >
         <TrashIcon className="size-3" /> Delete
       </Button>
-    </div>
+    </PanelFooter>
   )
 }
 
 // ---------------------------------------------------------------------------
+
+/** Nodes that carry their own pen settings. */
+function isOutlined(n: SquigNode): boolean {
+  return n.type === "shape" || n.type === "draw" || n.type === "arrow"
+}
 
 /**
  * Set one node's size through the exact transform the resize handle uses, so
@@ -314,38 +440,4 @@ function reflowText(n: TextNode, text: string, fontSize: number): Partial<TextNo
   const lines = (text || " ").split("\n")
   const wGuess = Math.max(...lines.map((l) => l.length)) * fontSize * 0.5 + 10
   return { text, fontSize, w: Math.max(40, wGuess), h: lines.length * fontSize * 1.35 }
-}
-
-// ---------------------------------------------------------------------------
-
-function StyleToggle({
-  label,
-  hint,
-  on,
-  mixed = false,
-  onClick,
-  children,
-}: {
-  label: string
-  hint: string
-  on: boolean
-  /** the selection disagrees — shown as a dash, like every other control */
-  mixed?: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      aria-label={label}
-      aria-pressed={mixed ? "mixed" : on}
-      title={mixed ? `${label} · mixed · ${hint}` : `${label} · ${hint}`}
-      onClick={onClick}
-      className={`flex size-7 items-center justify-center rounded-md border text-xs transition-colors ${
-        on ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground"
-      } ${mixed ? "border-dashed" : ""}`}
-    >
-      {children}
-    </button>
-  )
 }

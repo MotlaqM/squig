@@ -31,7 +31,7 @@ export function RecentFiles() {
       <DropdownMenuSubTrigger>Open recent</DropdownMenuSubTrigger>
       <DropdownMenuSubContent className="w-72">
         {files.length === 0 ? (
-          <p className="px-2 py-1.5 text-sm text-muted-foreground">nothing saved yet</p>
+          <p className="px-2.5 py-1.5 text-row text-muted-foreground">nothing saved yet</p>
         ) : (
           files.slice(0, SHOWN).map((f) => <FileRow key={f.id} file={f} current={f.id === docId} />)
         )}
@@ -57,10 +57,10 @@ function FileRow({ file, current }: { file: FileMeta; current: boolean }) {
   // a menu item still selects the item, whatever it does with the event.
   return (
     <div className="group/row relative flex items-center">
-      <DropdownMenuItem className="flex-1 gap-2 pr-8" onSelect={() => st().openFile(file.id)}>
+      <DropdownMenuItem className="flex-1 gap-2 pr-8" onClick={() => st().openFile(file.id)}>
         {current && <CheckIcon className="size-3.5 shrink-0 text-muted-foreground" weight="bold" />}
         <span className="min-w-0 flex-1 truncate">{file.name}</span>
-        <span className={`shrink-0 text-xs ${armed ? "text-destructive" : "text-muted-foreground"}`}>
+        <span className={`shrink-0 text-label ${armed ? "text-destructive" : "text-muted-foreground"}`}>
           {armed ? "click again" : relativeTime(file.updatedAt)}
         </span>
       </DropdownMenuItem>
@@ -71,7 +71,7 @@ function FileRow({ file, current }: { file: FileMeta; current: boolean }) {
           aria-label={armed ? `delete ${file.name} for good` : `delete ${file.name}`}
           title={armed ? "click again to delete" : "delete"}
           onClick={() => (armed ? st().deleteFile(file.id) : arm())}
-          className={`absolute right-1.5 flex size-6 items-center justify-center rounded-md transition-opacity ${
+          className={`absolute right-1.5 flex size-6 items-center justify-center rounded-chrome-sm transition-opacity ${
             armed
               ? "text-destructive opacity-100"
               : "text-muted-foreground opacity-0 group-hover/row:opacity-100 focus-visible:opacity-100"

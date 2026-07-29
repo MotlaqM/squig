@@ -220,7 +220,7 @@ function Palette() {
       className="fixed inset-0 z-50 flex flex-col justify-end" onPointerDown={close}>
         <div className="absolute inset-0 bg-foreground/10 backdrop-blur-[2px]" />
         <div
-          className="animate-in slide-in-from-bottom-4 fade-in relative mx-auto flex max-h-[62vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-2xl border border-b-0 bg-background shadow-2xl duration-150"
+          className="animate-in slide-in-from-bottom-4 fade-in relative mx-auto flex max-h-[62vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-chrome-lg border border-b-0 border-border/80 bg-background shadow-popup duration-150"
           onPointerDown={(e) => e.stopPropagation()}
         >
           <div className="relative shrink-0 border-b">
@@ -233,7 +233,7 @@ function Palette() {
                 setActive(0)
               }}
               placeholder="search anything — buttons, blocks, tools, undo…"
-              className="w-full bg-transparent py-4 pr-4 pl-11 text-[15px] outline-none placeholder:text-muted-foreground"
+              className="w-full bg-transparent py-4 pr-4 pl-11 text-title outline-none placeholder:text-muted-foreground"
               onKeyDown={(e) => {
                 e.stopPropagation()
                 // the keys that opened the sheet also close it
@@ -256,15 +256,15 @@ function Palette() {
             />
           </div>
 
-          <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain p-2">
+          <div ref={listRef} className="flex-1 overflow-y-auto overscroll-contain p-2.5">
             {!rows.length && (
-              <p className="py-10 text-center text-sm text-muted-foreground">
+              <p className="py-10 text-center text-row text-muted-foreground">
                 nothing matches &ldquo;{query}&rdquo;. try fewer letters.
               </p>
             )}
             {sections.map((section) => (
-              <div key={section.title} className="mb-1">
-                <div className="px-2.5 pt-2 pb-1 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              <div key={section.title} className="mb-2">
+                <div className="px-2.5 pt-3 pb-1.5 text-label font-medium text-foreground">
                   {section.title}
                 </div>
                 {section.rows.map(({ row, index }) => (
@@ -280,7 +280,7 @@ function Palette() {
             ))}
           </div>
 
-          <div className="flex shrink-0 items-center gap-4 border-t px-4 py-2 text-[11px] text-muted-foreground">
+          <div className="flex shrink-0 items-center gap-4 border-t border-border/70 px-4 py-2.5 text-label text-muted-foreground">
             <span><Kbd>↑</Kbd><Kbd>↓</Kbd> move</span>
             <span><Kbd>↵</Kbd> pick</span>
             <span><Kbd>esc</Kbd> close</span>
@@ -294,7 +294,7 @@ function Palette() {
 
 function Kbd({ children }: { children: React.ReactNode }) {
   return (
-    <kbd className="mr-1 inline-flex h-4 min-w-4 items-center justify-center rounded border bg-muted px-1 font-mono text-[10px]">
+    <kbd className="mr-1 inline-flex h-4 min-w-4 items-center justify-center rounded-chrome-xs border bg-muted px-1 font-mono text-micro">
       {children}
     </kbd>
   )
@@ -317,7 +317,7 @@ function PaletteRow({
       data-active={active}
       onMouseMove={onHover}
       onClick={onPick}
-      className={`flex w-full items-center gap-3 rounded-lg px-2.5 py-1.5 text-left text-sm ${
+      className={`flex h-ctl-lg w-full items-center gap-3 rounded-chrome-sm px-2.5 text-left text-row ${
         active ? "bg-accent text-accent-foreground" : "text-foreground"
       }`}
     >
@@ -325,13 +325,13 @@ function PaletteRow({
         <>
           <row.action.icon className="size-4 shrink-0 text-muted-foreground" weight="regular" />
           <span className="flex-1 truncate">{row.action.label}</span>
-          {row.action.hint && <span className="font-mono text-[11px] text-muted-foreground">{row.action.hint}</span>}
+          {row.action.hint && <span className="pl-6 font-mono text-label text-muted-foreground">{row.action.hint}</span>}
         </>
       ) : (
         <>
           <DefThumb def={row.def} />
           <span className="flex-1 truncate">{row.def.name}</span>
-          <span className="text-[11px] text-muted-foreground">{row.def.group}</span>
+          <span className="pl-6 text-label text-muted-foreground">{row.def.group}</span>
         </>
       )}
     </button>

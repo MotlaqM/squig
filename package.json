@@ -10,13 +10,13 @@
     "test": "tsc --noEmit -p scripts/tsconfig.json && node --experimental-strip-types --import ./scripts/register-loader.mjs scripts/test-geometry.ts && node --experimental-strip-types --import ./scripts/register-loader.mjs scripts/test-selection.ts"
   },
   "dependencies": {
+    "@base-ui/react": "^1.6.0",
     "@phosphor-icons/core": "^2.1.1",
     "@phosphor-icons/react": "^2.1.10",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "nanoid": "^6.0.0",
     "next": "16.2.12",
-    "radix-ui": "^1.6.7",
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "roughjs": "^4.6.6",

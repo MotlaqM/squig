@@ -84,7 +84,7 @@ export function FileName() {
       ) : (
         <button
           type="button"
-          className={`max-w-[60vw] truncate rounded-lg px-2.5 py-1 text-center text-sm text-muted-foreground transition-colors hover:bg-background hover:text-foreground ${shown ? "pointer-events-auto" : ""}`}
+          className={`max-w-[60vw] truncate rounded-chrome-sm px-2.5 py-1 text-center text-row text-muted-foreground transition-colors hover:bg-background hover:text-foreground ${shown ? "pointer-events-auto" : ""}`}
           onClick={() => st().setRenamingFile(true)}
           title="rename"
         >
@@ -129,7 +129,7 @@ function NameInput({ initial }: { initial: string }) {
     <span className="pointer-events-auto inline-grid items-center">
       <span
         aria-hidden
-        className="invisible col-start-1 row-start-1 min-w-32 max-w-[60vw] px-2.5 py-1 text-center text-sm whitespace-pre"
+        className="invisible col-start-1 row-start-1 min-w-32 max-w-[60vw] px-2.5 py-1 text-center text-row whitespace-pre"
       >
         {draft || " "}
       </span>
@@ -148,7 +148,7 @@ function NameInput({ initial }: { initial: string }) {
           if (e.key === "Enter") commit()
           if (e.key === "Escape") st().setRenamingFile(false)
         }}
-        className="col-start-1 row-start-1 w-full rounded-lg border bg-background px-2.5 py-1 text-center text-sm shadow-sm outline-none"
+        className="col-start-1 row-start-1 w-full rounded-chrome-sm border bg-background px-2.5 py-1 text-center text-row shadow-panel outline-none"
       />
     </span>
   )

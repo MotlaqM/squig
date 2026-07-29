@@ -8,7 +8,7 @@
 // can't start a marquee anywhere on the board.
 // ---------------------------------------------------------------------------
 
-import type { SquigNode } from "../types"
+import { normalizeFill, type SquigNode } from "../types"
 import type { Bounds } from "../selection"
 
 /**
@@ -105,7 +105,7 @@ function polylineOf(n: SquigNode): [number, number][] | null {
 
 /** Shapes are only solid to the pointer when they're actually filled. */
 function isSolid(n: SquigNode): boolean {
-  if (n.type === "shape") return n.fill
+  if (n.type === "shape") return normalizeFill(n.fill) !== "none"
   return n.type === "component" || n.type === "text"
 }
 

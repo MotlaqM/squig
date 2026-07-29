@@ -4,11 +4,25 @@
 // ---------------------------------------------------------------------------
 
 import { nanoid } from "nanoid"
-import type { ComponentNode, SquigNode } from "@/lib/types"
-import { mirrorPrims } from "@/lib/sketch/kit"
+import type { ComponentNode, FillTone, SquigNode } from "@/lib/types"
+import { mirrorPrims, type PrimOpts } from "@/lib/sketch/kit"
 import { renderComponent } from "./registry"
 
 const seed = () => Math.floor(Math.random() * 2 ** 31)
+
+/**
+ * Which fill tone a broken-out shape should carry.
+ *
+ * The inverse of the renderer's FILL_OPTS, and it has to stay that way: a card
+ * that broke apart into flat "filled" boxes would lose the tonal step between
+ * its inert areas and its emphasised ones, which is most of what the card was
+ * saying. Mirrors SHADE_FOR in components/canvas/sketch.tsx.
+ */
+function fillToneOf(o: PrimOpts | undefined): FillTone {
+  if (!o?.fill || o.fill === "none") return "none"
+  if (o.fill === "solid") return o.fillColor === "paper" ? "paper" : "strong"
+  return o.fillColor === "faint" || o.fillColor === undefined ? "light" : "strong"
+}
 
 export function breakApart(node: ComponentNode): SquigNode[] {
   const prims = mirrorPrims(
@@ -25,7 +39,7 @@ export function breakApart(node: ComponentNode): SquigNode[] {
         out.push({
           id: nanoid(8), type: "shape", shape: "rect",
           x: node.x + p.x, y: node.y + p.y, w: p.w, h: p.h,
-          fill: p.o?.fill === "shade" || p.o?.fill === "solid",
+          fill: fillToneOf(p.o),
           seed: seed(),
         })
         break
@@ -33,7 +47,7 @@ export function breakApart(node: ComponentNode): SquigNode[] {
         out.push({
           id: nanoid(8), type: "shape", shape: "ellipse",
           x: node.x + p.x, y: node.y + p.y, w: p.w, h: p.h,
-          fill: p.o?.fill === "shade" || p.o?.fill === "solid",
+          fill: fillToneOf(p.o),
           seed: seed(),
         })
         break
