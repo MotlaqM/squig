@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { THEMES, THEME_NAMES, type ThemeName } from "@/lib/theme"
 import { kbd } from "@/lib/shortcuts"
+import { RecentFiles } from "@/components/chrome/recent-files"
 
 /** Two-tone chip showing a palette's paper and ink. */
 function Swatch({ name }: { name: ThemeName }) {
@@ -76,10 +77,16 @@ export function TopCorner() {
           }}
         >
           <DropdownMenuItem onSelect={() => st().newFile()}>New file</DropdownMenuItem>
-          <DropdownMenuItem onSelect={importDoc}>Open…</DropdownMenuItem>
+          <RecentFiles />
+          <DropdownMenuItem onSelect={importDoc}>Open from disk…</DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem onSelect={() => st().saveNow()}>
+            Save
+            <DropdownMenuShortcut>{kbd("mod+s")}</DropdownMenuShortcut>
+          </DropdownMenuItem>
           <DropdownMenuItem onSelect={exportDoc}>
-            Export
-            <DropdownMenuShortcut>.squig.json</DropdownMenuShortcut>
+            Export a copy
+            <DropdownMenuShortcut>{kbd("mod+shift+s")}</DropdownMenuShortcut>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

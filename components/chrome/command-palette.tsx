@@ -10,6 +10,7 @@ import { useSquig } from "@/lib/store"
 import { ALL_DEFS, matches, type ComponentDef } from "@/lib/library/registry"
 import { SketchPrims } from "@/components/canvas/sketch"
 import { exportDoc, importDoc } from "@/lib/file-io"
+import { relativeTime } from "@/lib/files"
 import { kbd } from "@/lib/shortcuts"
 import {
   MagnifyingGlassIcon,
@@ -31,6 +32,7 @@ import {
   CornersOutIcon,
   CornersInIcon,
   FileIcon,
+  FloppyDiskIcon,
   DownloadSimpleIcon,
   UploadSimpleIcon,
   LinkBreakIcon,
@@ -61,7 +63,10 @@ interface Action {
 
 type Row = { kind: "action"; action: Action } | { kind: "def"; def: ComponentDef }
 
-const SECTION_ORDER = ["Tools", "Edit", "Arrange", "Text", "View", "File", "Components", "Blocks"]
+const SECTION_ORDER = ["Tools", "Edit", "Arrange", "Text", "View", "File", "Recent", "Components", "Blocks"]
+
+/** the palette lists a handful of files; the file menu holds the rest */
+const RECENT_IN_PALETTE = 6
 
 /** Mount only while open, so every ⌘K starts from a blank box with no reset dance. */
 export function CommandPalette() {
@@ -73,6 +78,8 @@ export function CommandPalette() {
 function Palette() {
   const selection = useSquig((s) => s.selection)
   const nodes = useSquig((s) => s.nodes)
+  const files = useSquig((s) => s.files)
+  const docId = useSquig((s) => s.docId)
   const st = useSquig.getState
 
   const [query, setQuery] = useState("")
@@ -146,10 +153,25 @@ function Palette() {
       { id: "keys", label: "Keyboard shortcuts", hint: kbd("shift+/"), section: "View", keywords: "hotkeys help cheat sheet", icon: KeyboardIcon, run: () => st().setShortcutsOpen(true) },
 
       { id: "new", label: "New file", section: "File", keywords: "blank clear reset", icon: FileIcon, run: () => st().newFile() },
-      { id: "export", label: "Export .squig", section: "File", keywords: "save download json", icon: DownloadSimpleIcon, run: exportDoc },
-      { id: "import", label: "Import .squig", section: "File", keywords: "open load json", icon: UploadSimpleIcon, run: importDoc },
+      { id: "save", label: "Save", hint: kbd("mod+s"), section: "File", keywords: "keep store local", icon: FloppyDiskIcon, run: () => st().saveNow() },
+      { id: "export", label: "Export .squig", hint: kbd("mod+shift+s"), section: "File", keywords: "save download json copy backup", icon: DownloadSimpleIcon, run: exportDoc },
+      { id: "import", label: "Import .squig", section: "File", keywords: "open load json disk", icon: UploadSimpleIcon, run: importDoc },
+
+      // every file this browser is holding, so ⌘K can open one too
+      ...files
+        .filter((f) => f.id !== docId)
+        .slice(0, RECENT_IN_PALETTE)
+        .map((f) => ({
+          id: `open:${f.id}`,
+          label: f.name,
+          hint: relativeTime(f.updatedAt),
+          section: "Recent",
+          keywords: "open recent file document",
+          icon: FileIcon,
+          run: () => st().openFile(f.id),
+        })),
     ],
-    [st, hasSel, hasComponent, hasText, hasGroup, selection.length]
+    [st, hasSel, hasComponent, hasText, hasGroup, selection.length, files, docId]
   )
 
   const rows = useMemo<Row[]>(() => {

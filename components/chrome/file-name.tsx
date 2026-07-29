@@ -12,11 +12,15 @@ import { useSquig } from "@/lib/store"
 /** how long the pointer has to sit still before the name comes back */
 const REST_MS = 550
 
+/** how long "saved" hangs around after ⌘S */
+const SAVED_MS = 1800
+
 export function FileName() {
   const fileName = useSquig((s) => s.fileName)
   const renaming = useSquig((s) => s.renamingFile)
   const st = useSquig.getState
   const [resting, setResting] = useState(true)
+  const [saved, setSaved] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // mirrors `resting` so a drag's worth of moves doesn't churn React state
   const restingRef = useRef(true)
@@ -43,7 +47,22 @@ export function FileName() {
     }
   }, [])
 
-  const shown = resting || renaming
+  // ⌘S says so out loud — the autosaves along the way stay quiet
+  useEffect(() => {
+    let id: ReturnType<typeof setTimeout> | null = null
+    const unsub = useSquig.subscribe((s, prev) => {
+      if (s.saveFlash === prev.saveFlash) return
+      setSaved(true)
+      if (id) clearTimeout(id)
+      id = setTimeout(() => setSaved(false), SAVED_MS)
+    })
+    return () => {
+      unsub()
+      if (id) clearTimeout(id)
+    }
+  }, [])
+
+  const shown = resting || renaming || saved
 
   return (
     <div
@@ -64,6 +83,13 @@ export function FileName() {
           {fileName}
         </button>
       )}
+      <span
+        aria-live="polite"
+        className="absolute top-full left-1/2 mt-1 -translate-x-1/2 text-[11px] whitespace-nowrap text-muted-foreground transition-opacity duration-200"
+        style={{ opacity: saved ? 1 : 0 }}
+      >
+        {saved ? "saved to this browser" : ""}
+      </span>
     </div>
   )
 }

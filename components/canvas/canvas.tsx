@@ -27,6 +27,7 @@ import { pickAt, pickInRect } from "@/lib/canvas/hit-test"
 import { unionBounds, type Bounds } from "@/lib/selection"
 import { NodeSketch, SketchPrims } from "./sketch"
 import { getDef, renderComponent } from "@/lib/library/registry"
+import { exportDoc } from "@/lib/file-io"
 import { ContextRow } from "./context-row"
 import { TextEditOverlay } from "./text-edit-overlay"
 
@@ -996,6 +997,20 @@ export function Canvas() {
   )
 
   // -- keyboard -------------------------------------------------------------
+
+  // ⌘S belongs to squig wherever the cursor is — mid-word, mid-rename, palette
+  // open. On the capture phase, because every field that swallows keystrokes
+  // sits downstream of here, and the browser's "save page" is never the point.
+  useEffect(() => {
+    const onSave = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.code !== "KeyS") return
+      e.preventDefault()
+      if (e.shiftKey) exportDoc()
+      else st().saveNow()
+    }
+    window.addEventListener("keydown", onSave, { capture: true })
+    return () => window.removeEventListener("keydown", onSave, { capture: true })
+  }, [st])
 
   useEffect(() => {
     const ac = new AbortController()
