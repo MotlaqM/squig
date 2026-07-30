@@ -2,7 +2,7 @@
 
 import { create } from "zustand"
 import { nanoid } from "nanoid"
-import type { ComponentNode, SquigNode, TextNode, Tool, Viewport, ShapeKind } from "./types"
+import type { ComponentNode, SquigNode, TextAlign, TextNode, Tool, Viewport, ShapeKind } from "./types"
 import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { getDef } from "./library/registry"
 import { breakApart } from "./library/break-apart"
@@ -167,6 +167,7 @@ interface SquigState {
   detachSelected: () => void
   flipSelected: (axis: "x" | "y") => void
   toggleTextStyle: (style: "bold" | "italic" | "underline") => void
+  setTextAlign: (align: TextAlign) => void
   setLinkOnSelection: (url: string) => void
 
   copySelected: () => void
@@ -810,6 +811,16 @@ export const useSquig = create<SquigState>((set, get) => ({
     // mixed selection turns everything on first, like every text editor ever
     const on = texts.some((n) => !n[style])
     get().updateNodes(Object.fromEntries(texts.map((n) => [n.id, { [style]: on } as Partial<SquigNode>])))
+  },
+
+  setTextAlign: (align) => {
+    const { selection, nodes } = get()
+    const texts = selection.map((id) => nodes[id]).filter((n) => n?.type === "text") as TextNode[]
+    if (!texts.length) return
+    // already unanimous — pressing the segment it's already on isn't an edit
+    if (texts.every((n) => (n.align ?? "left") === align)) return
+    get().checkpoint()
+    get().updateNodes(Object.fromEntries(texts.map((n) => [n.id, { align } as Partial<SquigNode>])))
   },
 
   setLinkOnSelection: (url) => {
