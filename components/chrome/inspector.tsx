@@ -20,11 +20,11 @@ import { normalizeFill } from "@/lib/types"
 import { getDef } from "@/lib/library/registry"
 import { selectionSummary, shared, sharedControls, sharedNumber, unionBounds } from "@/lib/selection"
 import { scaleNodes, MIN_SIZE } from "@/lib/canvas/transform"
-import { reflowText } from "@/lib/text"
+import { fitTextBox } from "@/lib/canvas/text-reflow"
 import { VariantControl } from "./variant-controls"
 import { MixedNumberField, MixedSwitch, MixedTextField } from "./mixed-fields"
 import { AlignRow } from "./align-row"
-import { TEXT_ALIGN_OPTIONS, TextStyleToggles, sharedAlign } from "./text-controls"
+import { ALIGN_OPTIONS, TextStyleToggles, sharedAlign } from "./text-controls"
 import { Panel, PanelFooter, PanelHeader, PanelNote, PanelSection, Row, StackRow } from "@/components/ui/panel"
 import { IconAction, Segmented, type SegmentOption } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
@@ -367,25 +367,21 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
             <MixedTextField
               ariaLabel="Text"
               shared={shared(texts.map((n) => n.text))}
-              onCommit={(v) => patch((n) => (n.type === "text" ? (reflowText(n, v, n.fontSize) as Partial<SquigNode>) : null))}
+              onCommit={(v) => patch((n) => (n.type === "text" ? (fitTextBox(n, v) as Partial<SquigNode>) : null))}
             />
           </StackRow>
 
-          <Row label="Style">
-            <TextStyleToggles texts={texts} />
-          </Row>
-
-          {/* Alignment is against the text's own box, so it has something to do
-              once that box is wider than a line — a second line, or a box you
-              dragged out. A one-line box is exactly its words, so all three
-              land in the same place, which is the honest answer. */}
           <Row label="Align">
             <Segmented
               ariaLabel="Text alignment"
-              options={TEXT_ALIGN_OPTIONS}
+              options={ALIGN_OPTIONS}
               shared={sharedAlign(texts)}
-              onChange={(a) => st().setTextAlign(a)}
+              onChange={(align) => st().setTextAlign(align)}
             />
+          </Row>
+
+          <Row label="Style">
+            <TextStyleToggles texts={texts} />
           </Row>
 
           {/* A link is a value, not a mode — so it gets a field showing where
@@ -409,11 +405,11 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
               shared={sharedNumber(texts, (n) => (n as TextNode).fontSize)}
               onGestureStart={startGesture}
               onCommit={(v) =>
-                live((n) => (n.type === "text" && v > 0 ? (reflowText(n, n.text, v) as Partial<SquigNode>) : null))
+                live((n) => (n.type === "text" && v > 0 ? (fitTextBox(n, n.text, v) as Partial<SquigNode>) : null))
               }
               onStep={(d) =>
                 live((n) =>
-                  n.type === "text" ? (reflowText(n, n.text, Math.max(4, n.fontSize + d)) as Partial<SquigNode>) : null
+                  n.type === "text" ? (fitTextBox(n, n.text, Math.max(4, n.fontSize + d)) as Partial<SquigNode>) : null
                 )
               }
             />

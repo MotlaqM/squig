@@ -13,7 +13,7 @@ import { useCallback, useState } from "react"
 import { useSquig } from "@/lib/store"
 import type { SquigNode, Viewport, ComponentNode, ShapeNode, ArrowNode, TextNode, FillTone } from "@/lib/types"
 import { normalizeFill } from "@/lib/types"
-import { reflowText } from "@/lib/text"
+import { fitTextBox } from "@/lib/canvas/text-reflow"
 import { shared, sharedControls, sharedNumber, unionBounds } from "@/lib/selection"
 import { VariantControl } from "@/components/chrome/variant-controls"
 import { MixedNumberField, MixedSwitch } from "@/components/chrome/mixed-fields"
@@ -156,11 +156,11 @@ export function ContextRow({
             shared={sharedNumber(texts, (n) => (n as TextNode).fontSize)}
             onGestureStart={() => st().checkpoint()}
             onCommit={(v) =>
-              live((n) => (n.type === "text" && v > 0 ? (reflowText(n, n.text, v) as Partial<SquigNode>) : null))
+              live((n) => (n.type === "text" && v > 0 ? (fitTextBox(n, n.text, v) as Partial<SquigNode>) : null))
             }
             onStep={(d) =>
               live((n) =>
-                n.type === "text" ? (reflowText(n, n.text, Math.max(4, n.fontSize + d)) as Partial<SquigNode>) : null
+                n.type === "text" ? (fitTextBox(n, n.text, Math.max(4, n.fontSize + d)) as Partial<SquigNode>) : null
               )
             }
           />

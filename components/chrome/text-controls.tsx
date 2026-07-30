@@ -38,15 +38,23 @@ export const TEXT_STYLES = [
   { key: "underline", label: "Underline", icon: TextUnderlineIcon },
 ] as const
 
+/**
+ * Three, not four: squig text doesn't wrap, so there is no justify to be had —
+ * a line ends where you pressed Return. What these do decide is which edge the
+ * run is pinned to, which is the edge that holds still while you type.
+ */
 const ALIGNMENTS: { value: TextAlign; label: string; icon: PhosphorIcon }[] = [
   { value: "left", label: "Align left", icon: TextAlignLeftIcon },
   { value: "center", label: "Align centre", icon: TextAlignCenterIcon },
   { value: "right", label: "Align right", icon: TextAlignRightIcon },
 ]
 
-export const TEXT_ALIGN_OPTIONS: readonly SegmentOption<TextAlign>[] = ALIGNMENTS.map(
-  ({ value, label, icon: Icon }) => ({ value, label, content: <Icon className="size-3.5" /> })
-)
+/** The panel's flat track. The row folds the same three behind `TextAlignMenu`. */
+export const ALIGN_OPTIONS: readonly SegmentOption<TextAlign>[] = ALIGNMENTS.map(({ value, label, icon: Icon }) => ({
+  value,
+  label,
+  content: <Icon className="size-4" />,
+}))
 
 /** What the whole selection agrees its alignment is — absent reads as left. */
 export function sharedAlign(texts: readonly TextNode[]): Shared<TextAlign> {
@@ -58,7 +66,7 @@ export function sharedAlign(texts: readonly TextNode[]): Shared<TextAlign> {
 /**
  * Bold / italic / underline over a possibly-mixed selection of text nodes.
  *
- * In the panel they ride a track, so the Style row and the Align row under it
+ * In the panel they ride a track, so the Style row and the Align row beside it
  * are visibly the same kind of control. The context row has no tracks at all —
  * alignment there is a single button — so `compact` drops the rail and leaves
  * three bare toggles, which is what the rest of that row is made of.
