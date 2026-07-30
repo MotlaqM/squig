@@ -111,14 +111,14 @@ export const buttonGroupDef: ComponentDef = {
   group: "Buttons",
   keywords: ["segmented", "control", "toggle", "switcher"],
   size: { w: 240, h: 36 },
-  defaults: { labels: "Day, Week, Month, Year, All, Custom", count: 3, active: 2 },
+  defaults: { labels: "Day, Week, Month", active: 2 },
   controls: [
     { key: "labels", label: "Labels (comma-sep)", type: "text" },
-    { key: "count", label: "Segments", type: "number", min: 2, max: 6, quick: true },
     { key: "active", label: "Active", type: "number", min: 1, max: 6, quick: true },
   ],
   render(p, w, h) {
-    const labels = list(p, "labels", "Day, Week, Month, Year, All, Custom")
+    const labels = list(p, "labels", "Day, Week, Month")
+    // Segments follow the labels now; nodes saved with the old Segments control keep their count.
     const n = clamp(Math.round(num(p, "count", labels.length)), 2, 6)
     const active = clamp(Math.round(num(p, "active", 1)), 1, n) - 1
     const segW = w / n
@@ -1484,8 +1484,8 @@ export const spinnerDef: ComponentDef = {
   defaults: { style: "ring", showLabel: false, label: "Loading…" },
   controls: [
     { key: "style", label: "Style", type: "select", options: ["ring", "dots"], quick: true },
-    { key: "showLabel", label: "Label", type: "toggle", quick: true },
-    { key: "label", label: "Text", type: "text" },
+    { key: "showLabel", label: "Show label", type: "toggle", quick: true },
+    { key: "label", label: "Label", type: "text" },
   ],
   render(p, w, h) {
     const showLabel = bool(p, "showLabel")
@@ -1616,8 +1616,8 @@ export const cardProfileDef: ComponentDef = {
     { key: "name", label: "Name", type: "text" },
     { key: "role", label: "Role", type: "text" },
     { key: "layout", label: "Layout", type: "select", options: ["centered", "row"], quick: true },
-    { key: "action", label: "Action", type: "toggle", quick: true },
-    { key: "cta", label: "Button", type: "text" },
+    { key: "action", label: "Button", type: "toggle", quick: true },
+    { key: "cta", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const pad = clamp(w * 0.07, 12, 18)
@@ -1731,7 +1731,7 @@ export const cardPricingDef: ComponentDef = {
     { key: "period", label: "Period", type: "text" },
     { key: "features", label: "Features", type: "number", min: 1, max: 6, quick: true },
     { key: "popular", label: "Popular", type: "toggle", quick: true },
-    { key: "cta", label: "Button", type: "text" },
+    { key: "cta", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const popular = bool(p, "popular")
@@ -1827,14 +1827,15 @@ export const cardProductDef: ComponentDef = {
   group: "Display",
   keywords: ["shop", "commerce", "buy", "price", "cart", "card"],
   size: { w: 220, h: 270 },
-  defaults: { title: "Squig Tote", price: "$28", badge: true, rating: true, cta: "icon", ctaLabel: "Add to cart" },
+  defaults: { title: "Squig Tote", price: "$28", badge: true, badgeLabel: "Sale", rating: true, cta: "icon", ctaLabel: "Add to cart" },
   controls: [
     { key: "title", label: "Title", type: "text" },
     { key: "price", label: "Price", type: "text" },
     { key: "badge", label: "Badge", type: "toggle", quick: true },
+    { key: "badgeLabel", label: "Badge text", type: "text" },
     { key: "rating", label: "Rating", type: "toggle", quick: true },
     { key: "cta", label: "Action", type: "select", options: ["icon", "button"], quick: true },
-    { key: "ctaLabel", label: "Button", type: "text" },
+    { key: "ctaLabel", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const pad = 14
@@ -1843,10 +1844,12 @@ export const cardProductDef: ComponentDef = {
     prims.push(rect(0, 0, w, imgH, { fill: "shade", fillColor: "faint" }))
     prims.push(...icon("image", w / 2, imgH / 2, clamp(Math.min(w, imgH) * 0.24, 18, 46), { stroke: "muted" }))
     if (bool(p, "badge") && imgH > 40) {
-      const bw = 46
+      const bl = str(p, "badgeLabel", "Sale")
+      const maxBw = Math.max(24, w - pad * 2)
+      const bw = clamp(advance(bl, 10) + 20, Math.min(46, maxBw), maxBw)
       const bh = 20
       prims.push(pill(pad, pad, bw, bh, PAPER_FILL), pill(pad, pad, bw, bh))
-      prims.push(text(pad + bw / 2, pad + bh / 2 + 4, "Sale", 10, { align: "center" }))
+      prims.push(text(pad + bw / 2, pad + bh / 2 + 4, truncate(bl, 10, bw - 10), 10, { align: "center" }))
     }
     let y = imgH + pad + 12
     prims.push(text(pad, y, truncate(str(p, "title", ""), 15, w - pad * 2), 15, { bold: true }))

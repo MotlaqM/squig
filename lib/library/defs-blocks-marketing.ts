@@ -15,6 +15,13 @@ import { imageDef, breadcrumbDef } from "./defs-display"
 const str = (p: Props, k: string, fallback = ""): string => String(p[k] ?? fallback)
 const bool = (p: Props, k: string): boolean => Boolean(p[k])
 const num = (p: Props, k: string, fallback = 0): number => Number(p[k] ?? fallback)
+const list = (p: Props, k: string, fallback: string): string[] => {
+  const out = str(p, k, fallback)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return out.length ? out : fallback.split(",").map((s) => s.trim())
+}
 const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
 const int = (p: Props, k: string, fallback: number, lo: number, hi: number): number =>
   clamp(Math.round(num(p, k, fallback)), lo, hi)
@@ -185,6 +192,7 @@ export const heroDef: ComponentDef = {
   defaults: {
     layout: "centered",
     eyebrow: true,
+    eyebrowText: "now in open beta",
     secondCta: true,
     headline: "Draw it badly, ship it anyway",
     subline: "A wireframe tool that never pretends to be the final design.",
@@ -199,6 +207,7 @@ export const heroDef: ComponentDef = {
     { key: "subline", label: "Subhead", type: "text" },
     { key: "cta", label: "Button label", type: "text" },
     { key: "cta2", label: "Second button label", type: "text" },
+    { key: "eyebrowText", label: "Eyebrow text", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -210,6 +219,7 @@ export const heroDef: ComponentDef = {
     const second = bool(p, "secondCta")
     const l1 = str(p, "cta", "Start scribbling")
     const l2 = str(p, "cta2", "See examples")
+    const eyebrowText = str(p, "eyebrowText", "now in open beta").trim()
 
     if (layout === "centered") {
       const colW = clamp(w - pad * 2, 160, Math.max(200, w * 0.7))
@@ -221,8 +231,8 @@ export const heroDef: ComponentDef = {
       // laid out top-down leaves all its slack at the bottom and looks broken
       const stack: Prim[] = []
       let y = 0
-      if (bool(p, "eyebrow")) {
-        stack.push(...pillCentered("now in open beta", w / 2, y, 24))
+      if (bool(p, "eyebrow") && eyebrowText) {
+        stack.push(...pillCentered(eyebrowText, w / 2, y, 24))
         y += 36
       }
       const head = fitHead(x0, y, colW, h - vpad * 2 - y - bh - 26, { heading, subline, align: "center", size: hs })
@@ -249,8 +259,8 @@ export const heroDef: ComponentDef = {
 
     const stack: Prim[] = []
     let sy = 0
-    if (bool(p, "eyebrow")) {
-      stack.push(...pill("now in open beta", 0, sy, 24))
+    if (bool(p, "eyebrow") && eyebrowText) {
+      stack.push(...pill(truncate(eyebrowText, 12, Math.max(60, colW - 26)), 0, sy, 24))
       sy += 34
     }
     const head = fitHead(0, sy, colW, bodyH - sy - bh - 20, {
@@ -464,7 +474,7 @@ export const featureGridDef: ComponentDef = {
     { key: "cols", label: "Columns", type: "number", min: 2, max: 4, quick: true },
     { key: "rows", label: "Rows", type: "number", min: 1, max: 3, quick: true },
     { key: "boxed", label: "Cards", type: "toggle", quick: true },
-    { key: "heading", label: "Heading", type: "toggle" },
+    { key: "heading", label: "Show headline", type: "toggle" },
     { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
@@ -536,12 +546,13 @@ export const featureSplitDef: ComponentDef = {
   group: "Marketing",
   keywords: ["feature", "image left", "image right", "bullets", "two column"],
   size: { w: 800, h: 340 },
-  defaults: { side: "left", bullets: 3, cta: true, headline: "Sketch first, pixel-push never" },
+  defaults: { side: "left", bullets: 3, cta: true, headline: "Sketch first, pixel-push never", ctaLabel: "Show me more" },
   controls: [
     { key: "side", label: "Image side", type: "select", options: ["left", "right"], quick: true },
     { key: "bullets", label: "Bullets", type: "number", min: 2, max: 5, quick: true },
     { key: "cta", label: "Button", type: "toggle", quick: true },
     { key: "headline", label: "Headline", type: "text" },
+    { key: "ctaLabel", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -575,7 +586,7 @@ export const featureSplitDef: ComponentDef = {
     }
     sy += rowH * n + 12
     if (bool(p, "cta") && sy + bh <= bodyH) {
-      const label = "Show me more"
+      const label = str(p, "ctaLabel", "Show me more")
       stack.push(...sub(buttonDef, { label, variant: "outline" }, 0, sy, Math.min(btnW(label), colW), bh))
       sy += bh
     }
@@ -593,22 +604,37 @@ export const featureListDef: ComponentDef = {
   group: "Marketing",
   keywords: ["features", "rows", "alternating", "zigzag", "list"],
   size: { w: 740, h: 400 },
-  defaults: { rows: 3, alternate: true, dividers: true },
+  // `heading` is new, and renderComponent merges current defaults under a saved
+  // node's props — so a default of `true` would grow a headline on every list
+  // already sitting on somebody's canvas. Ships off; one click turns it on.
+  defaults: { rows: 3, alternate: true, dividers: true, heading: false, headline: "What it actually does" },
   controls: [
     { key: "rows", label: "Rows", type: "number", min: 2, max: 5, quick: true },
     { key: "alternate", label: "Alternate sides", type: "toggle", quick: true },
     { key: "dividers", label: "Dividers", type: "toggle" },
+    { key: "heading", label: "Show headline", type: "toggle" },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
     const n = int(p, "rows", 3, 2, 5)
     const alt = bool(p, "alternate")
     const pad = clamp(w * 0.04, 12, 32)
-    const rowH = (h - pad * 2) / n
+    let top = pad
+    if (bool(p, "heading")) {
+      const head = headBlock(pad, pad, w - pad * 2, {
+        heading: str(p, "headline", "What it actually does"),
+        align: "center",
+        size: clamp(w * 0.032, 16, 24),
+      })
+      prims.push(...head.prims)
+      top = head.bottom + 18
+    }
+    const rowH = (h - top - pad) / n
     if (rowH < 40) return prims
     const iconBox = clamp(Math.min(rowH * 0.6, 60), 32, 60)
     for (let i = 0; i < n; i++) {
-      const y = pad + i * rowH
+      const y = top + i * rowH
       const flip = alt && i % 2 === 1
       const ix = flip ? w - pad - iconBox : pad
       const tx = flip ? pad : pad + iconBox + 22
@@ -639,11 +665,12 @@ export const testimonialBlockDef: ComponentDef = {
   group: "Marketing",
   keywords: ["quote", "reviews", "social proof", "customers", "praise"],
   size: { w: 800, h: 300 },
-  defaults: { variant: "3-up", stars: true, heading: false },
+  defaults: { variant: "3-up", stars: true, heading: false, headline: "People say nice things" },
   controls: [
     { key: "variant", label: "Variant", type: "select", options: ["single", "2-up", "3-up"], quick: true },
     { key: "stars", label: "Stars", type: "toggle", quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -653,7 +680,7 @@ export const testimonialBlockDef: ComponentDef = {
     let top = pad
     if (bool(p, "heading")) {
       const head = headBlock(pad, pad, w - pad * 2, {
-        heading: "People say nice things",
+        heading: str(p, "headline", "People say nice things"),
         align: "center",
         size: clamp(w * 0.032, 16, 24),
       })
@@ -724,11 +751,12 @@ export const logoCloudDef: ComponentDef = {
   group: "Marketing",
   keywords: ["logos", "customers", "trusted by", "brands", "social proof"],
   size: { w: 800, h: 170 },
-  defaults: { count: 5, heading: true, variant: "row" },
+  defaults: { count: 5, heading: true, variant: "row", headline: "Teams that draw badly on purpose" },
   controls: [
     { key: "count", label: "Logos", type: "number", min: 3, max: 8, quick: true },
     { key: "variant", label: "Layout", type: "select", options: ["row", "grid"], quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -737,8 +765,11 @@ export const logoCloudDef: ComponentDef = {
     const pad = clamp(w * 0.04, 12, 34)
     let top = pad
     if (bool(p, "heading")) {
-      prims.push(text(w / 2, top + 13, truncate("Teams that draw badly on purpose", 14, w - pad * 2), 14, { align: "center", color: "muted" }))
-      top += 30
+      const head = str(p, "headline", "Teams that draw badly on purpose").trim()
+      if (head) {
+        prims.push(text(w / 2, top + 13, truncate(head, 14, w - pad * 2), 14, { align: "center", color: "muted" }))
+        top += 30
+      }
     }
     const bodyH = h - top - pad
     if (bodyH < 24) return prims
@@ -774,12 +805,23 @@ export const pricingBlockDef: ComponentDef = {
   group: "Marketing",
   keywords: ["plans", "tiers", "billing", "money", "subscribe"],
   size: { w: 840, h: 460 },
-  defaults: { tiers: 3, highlight: 2, heading: true, billing: true },
+  defaults: {
+    tiers: 3,
+    highlight: 2,
+    heading: true,
+    billing: true,
+    headline: "Pick a plan, any plan",
+    tierNames: "Doodle, Sketch, Masterpiece, Gallery",
+    prices: "$0, $12, $49, $199",
+  },
   controls: [
     { key: "tiers", label: "Tiers", type: "number", min: 2, max: 4, quick: true },
     { key: "highlight", label: "Highlight tier", type: "number", min: 0, max: 4, quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
     { key: "billing", label: "Billing toggle", type: "toggle" },
+    { key: "headline", label: "Headline", type: "text" },
+    { key: "tierNames", label: "Tier names (comma-sep)", type: "text" },
+    { key: "prices", label: "Prices (comma-sep)", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -792,7 +834,7 @@ export const pricingBlockDef: ComponentDef = {
     if (bool(p, "heading")) {
       const head = headBlock(pad, top, w - pad * 2, {
         eyebrow: "no hidden fees, promise",
-        heading: "Pick a plan, any plan",
+        heading: str(p, "headline", "Pick a plan, any plan"),
         align: "center",
         size: clamp(w * 0.032, 16, 26),
       })
@@ -810,8 +852,8 @@ export const pricingBlockDef: ComponentDef = {
 
     const gap = clamp(w * 0.02, 10, 22)
     const cw = (w - pad * 2 - gap * (n - 1)) / n
-    const names = ["Doodle", "Sketch", "Masterpiece", "Gallery"]
-    const prices = ["$0", "$12", "$49", "$199"]
+    const names = list(p, "tierNames", "Doodle, Sketch, Masterpiece, Gallery")
+    const prices = list(p, "prices", "$0, $12, $49, $199")
     for (let i = 0; i < n; i++) {
       const x = pad + i * (cw + gap)
       const isHi = i + 1 === hi
@@ -824,9 +866,10 @@ export const pricingBlockDef: ComponentDef = {
         prims.push(text(x + cw / 2, y0 + 17, "most popular", 11, { align: "center" }))
         y = y0 + 48
       }
-      prims.push(text(x + cw / 2, y, truncate(names[i], 16, cw - 16), 16, { align: "center", bold: true }))
+      prims.push(text(x + cw / 2, y, truncate(names[i % names.length] ?? "", 16, cw - 16), 16, { align: "center", bold: true }))
       y += 32
-      prims.push(text(x + cw / 2, y, prices[i], clamp(cw * 0.13, 18, 28), { align: "center", bold: true }))
+      const ps = clamp(cw * 0.13, 18, 28)
+      prims.push(text(x + cw / 2, y, truncate(prices[i % prices.length] ?? "", ps, cw - 16), ps, { align: "center", bold: true }))
       prims.push(text(x + cw / 2, y + 16, "per month-ish", 11, { align: "center", color: "muted" }))
       y += 34
       const btnH = clamp(bodyH * 0.09, 30, 38)
@@ -870,12 +913,13 @@ export const faqDef: ComponentDef = {
   group: "Marketing",
   keywords: ["questions", "accordion", "help", "answers", "support"],
   size: { w: 740, h: 400 },
-  defaults: { count: 5, columns: 1, heading: true, expanded: 1 },
+  defaults: { count: 5, columns: 1, heading: true, expanded: 1, headline: "Questions people actually ask" },
   controls: [
     { key: "count", label: "Questions", type: "number", min: 2, max: 6, quick: true },
     { key: "columns", label: "Columns", type: "number", min: 1, max: 2, quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
     { key: "expanded", label: "Expanded", type: "number", min: 0, max: 6 },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -887,7 +931,7 @@ export const faqDef: ComponentDef = {
     let top = pad
     if (bool(p, "heading")) {
       const head = headBlock(pad, top, w - pad * 2, {
-        heading: "Questions people actually ask",
+        heading: str(p, "headline", "Questions people actually ask"),
         align: cols === 1 ? "left" : "center",
         size: clamp(w * 0.032, 16, 24),
       })
@@ -920,8 +964,11 @@ export const faqDef: ComponentDef = {
 
 // -- stats band -------------------------------------------------------------
 
+// no commas in these — they double as the fallback for a comma-separated field
 const STAT_VALUES = ["12k", "99.9%", "4.9", "1.2M", "0"]
-const STAT_LABELS = ["boxes drawn", "uptime, honestly", "average rating", "lines wobbled", "meetings needed"]
+const STAT_LABELS = ["boxes drawn", "uptime (honestly)", "average rating", "lines wobbled", "meetings needed"]
+const STAT_VALUES_S = STAT_VALUES.join(", ")
+const STAT_LABELS_S = STAT_LABELS.join(", ")
 
 export const statsBandDef: ComponentDef = {
   kind: "stats-band",
@@ -930,11 +977,13 @@ export const statsBandDef: ComponentDef = {
   group: "Marketing",
   keywords: ["metrics", "numbers", "kpi", "counters", "proof"],
   size: { w: 780, h: 160 },
-  defaults: { count: 4, dividers: true, boxed: false },
+  defaults: { count: 4, dividers: true, boxed: false, values: STAT_VALUES_S, labels: STAT_LABELS_S },
   controls: [
     { key: "count", label: "Stats", type: "number", min: 2, max: 5, quick: true },
     { key: "dividers", label: "Dividers", type: "toggle", quick: true },
     { key: "boxed", label: "Boxed", type: "toggle", quick: true },
+    { key: "values", label: "Values (comma-sep)", type: "text" },
+    { key: "labels", label: "Labels (comma-sep)", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -944,10 +993,14 @@ export const statsBandDef: ComponentDef = {
     const colW = (w - pad * 2) / n
     const cy = h / 2
     const vs = clamp(Math.min(colW * 0.24, h * 0.3), 18, 40)
+    const vals = list(p, "values", STAT_VALUES_S)
+    const labs = list(p, "labels", STAT_LABELS_S)
     for (let i = 0; i < n; i++) {
       const cx = pad + colW * i + colW / 2
-      prims.push(text(cx, cy + vs * 0.2, STAT_VALUES[i % STAT_VALUES.length], vs, { align: "center", bold: true }))
-      prims.push(text(cx, cy + vs * 0.2 + 22, truncate(STAT_LABELS[i % STAT_LABELS.length], 12, colW - 16), 12, { align: "center", color: "muted" }))
+      const v = vals[i % vals.length] ?? ""
+      const l = labs[i % labs.length] ?? ""
+      prims.push(text(cx, cy + vs * 0.2, truncate(v, vs, colW - 12), vs, { align: "center", bold: true }))
+      prims.push(text(cx, cy + vs * 0.2 + 22, truncate(l, 12, colW - 16), 12, { align: "center", color: "muted" }))
       if (bool(p, "dividers") && i > 0) {
         prims.push(line(pad + colW * i, cy - h * 0.22, pad + colW * i, cy + h * 0.22, { stroke: "faint" }))
       }
@@ -970,12 +1023,14 @@ export const newsletterDef: ComponentDef = {
     finePrint: true,
     headline: "One email a month. Maybe.",
     subline: "Drawing tips, product notes, zero growth hacks.",
+    cta: "Subscribe",
   },
   controls: [
     { key: "align", label: "Align", type: "select", options: ["center", "left"], quick: true },
     { key: "finePrint", label: "Fine print", type: "toggle", quick: true },
     { key: "headline", label: "Headline", type: "text" },
     { key: "subline", label: "Subhead", type: "text" },
+    { key: "cta", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -993,7 +1048,7 @@ export const newsletterDef: ComponentDef = {
     })
     stack.push(...head.prims)
     let sy = head.bottom + 16
-    const label = "Subscribe"
+    const label = str(p, "cta", "Subscribe")
     const bw = Math.min(btnW(label), colW * 0.4)
     const formW = Math.min(colW, 440)
     const fx = centered ? (colW - formW) / 2 : 0
@@ -1210,11 +1265,12 @@ export const teamGridDef: ComponentDef = {
   group: "Marketing",
   keywords: ["people", "about", "staff", "members", "crew"],
   size: { w: 800, h: 320 },
-  defaults: { count: 4, heading: true, cards: false },
+  defaults: { count: 4, heading: true, cards: false, headline: "Small team, big erasers" },
   controls: [
     { key: "count", label: "People", type: "number", min: 2, max: 8, quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
     { key: "cards", label: "Cards", type: "toggle", quick: true },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1224,7 +1280,7 @@ export const teamGridDef: ComponentDef = {
     if (bool(p, "heading")) {
       const head = headBlock(pad, top, w - pad * 2, {
         eyebrow: "the humans",
-        heading: "Small team, big erasers",
+        heading: str(p, "headline", "Small team, big erasers"),
         align: "center",
         size: clamp(w * 0.032, 16, 24),
       })
@@ -1261,6 +1317,7 @@ export const teamGridDef: ComponentDef = {
 
 const AWARD_ICONS = ["trophy", "medal", "crown", "seal-check", "star"]
 const AWARD_TITLES = ["Best of 2026", "Editors' pick", "Top rated", "Verified nice", "Reader favourite"]
+const AWARD_SOURCES = ["some magazine", "a design blog", "an awards site", "a newsletter", "some podcast"]
 
 export const awardsDef: ComponentDef = {
   kind: "awards",
@@ -1269,11 +1326,12 @@ export const awardsDef: ComponentDef = {
   group: "Marketing",
   keywords: ["badges", "recognition", "trophy", "press", "proof"],
   size: { w: 760, h: 190 },
-  defaults: { count: 4, heading: true, circles: true },
+  defaults: { count: 4, heading: true, circles: true, headline: "Somebody gave us these" },
   controls: [
     { key: "count", label: "Awards", type: "number", min: 2, max: 5, quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
     { key: "circles", label: "Circles", type: "toggle", quick: true },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1281,8 +1339,11 @@ export const awardsDef: ComponentDef = {
     const pad = clamp(w * 0.04, 12, 32)
     let top = pad
     if (bool(p, "heading")) {
-      prims.push(text(w / 2, top + 14, truncate("Somebody gave us these", 15, w - pad * 2), 15, { align: "center", bold: true }))
-      top += 30
+      const head = str(p, "headline", "Somebody gave us these").trim()
+      if (head) {
+        prims.push(text(w / 2, top + 14, truncate(head, 15, w - pad * 2), 15, { align: "center", bold: true }))
+        top += 30
+      }
     }
     const bodyH = h - top - pad
     if (bodyH < 50) return prims
@@ -1296,7 +1357,7 @@ export const awardsDef: ComponentDef = {
       const ty = top + d + 26
       if (ty < top + bodyH + 10) {
         prims.push(text(cx, ty, truncate(AWARD_TITLES[i % AWARD_TITLES.length], 13, colW - 12), 13, { align: "center", bold: true }))
-        prims.push(text(cx, ty + 17, "some magazine", 11, { align: "center", color: "muted" }))
+        prims.push(text(cx, ty + 17, truncate(AWARD_SOURCES[i % AWARD_SOURCES.length], 11, colW - 12), 11, { align: "center", color: "muted" }))
       }
     }
     return prims
@@ -1474,13 +1535,21 @@ export const blogPostHeaderDef: ComponentDef = {
   group: "Content",
   keywords: ["article", "title", "byline", "author", "cover"],
   size: { w: 720, h: 380 },
-  defaults: { cover: true, tag: true, tagText: "Craft", title: "Why your wireframe should look unfinished", align: "left" },
+  defaults: {
+    cover: true,
+    tag: true,
+    tagText: "Craft",
+    title: "Why your wireframe should look unfinished",
+    align: "left",
+    author: "Ana Ruiz",
+  },
   controls: [
     { key: "align", label: "Align", type: "select", options: ["left", "center"], quick: true },
     { key: "cover", label: "Cover image", type: "toggle", quick: true },
     { key: "tag", label: "Tag", type: "toggle", quick: true },
     { key: "title", label: "Title", type: "text" },
     { key: "tagText", label: "Tag text", type: "text" },
+    { key: "author", label: "Author", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1504,11 +1573,20 @@ export const blogPostHeaderDef: ComponentDef = {
     y = head.bottom + 16
     const av = 36
     const meta = "Mar 3, 2026 · 6 min read"
-    const rowW = av + 12 + Math.max(textWidth(PEOPLE[0], 14), textWidth(meta, 12))
-    const rx = centered ? w / 2 - rowW / 2 : pad
+    const author = str(p, "author", PEOPLE[0]).trim() || PEOPLE[0]
+    const nameMaxW = Math.max(20, colW - av - 12)
+    const rowW = av + 12 + Math.max(Math.min(textWidth(author, 14), nameMaxW), textWidth(meta, 12))
+    const rx = centered ? Math.max(pad, w / 2 - rowW / 2) : pad
+    const initials =
+      author
+        .split(/\s+/)
+        .map((s) => s[0])
+        .join("")
+        .slice(0, 2)
+        .toUpperCase() || "AR"
     if (y + av <= h) {
-      prims.push(...sub(avatarDef, { content: "initials", initials: "AR" }, rx, y, av, av))
-      prims.push(text(rx + av + 12, y + 15, PEOPLE[0], 14, { bold: true }))
+      prims.push(...sub(avatarDef, { content: "initials", initials }, rx, y, av, av))
+      prims.push(text(rx + av + 12, y + 15, truncate(author, 14, nameMaxW), 14, { bold: true }))
       prims.push(text(rx + av + 12, y + 31, meta, 12, { color: "muted" }))
       y += av + 20
     }
@@ -1529,12 +1607,19 @@ export const articleBodyDef: ComponentDef = {
   group: "Content",
   keywords: ["prose", "reading column", "text", "pull quote", "post"],
   size: { w: 640, h: 480 },
-  defaults: { quote: true, bullets: true, heading: true, title: "The rectangle problem" },
+  defaults: {
+    quote: true,
+    bullets: true,
+    heading: true,
+    title: "The rectangle problem",
+    quoteText: "A wireframe that looks finished gets treated like it is finished.",
+  },
   controls: [
     { key: "heading", label: "Show heading", type: "toggle", quick: true },
     { key: "quote", label: "Pull quote", type: "toggle", quick: true },
     { key: "bullets", label: "Bullet list", type: "toggle", quick: true },
     { key: "title", label: "Heading", type: "text" },
+    { key: "quoteText", label: "Quote", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1559,7 +1644,7 @@ export const articleBodyDef: ComponentDef = {
       prims.push(...icon("quotes", pad + 22, y + 12, 15, { stroke: "muted" }))
       const qs = clamp(w * 0.03, 14, 19)
       const qw = colW - 44
-      const q = wrap("A wireframe that looks finished gets treated like it is finished.", qs, qw, 2)
+      const q = wrap(str(p, "quoteText", "A wireframe that looks finished gets treated like it is finished."), qs, qw, 2)
       q.forEach((ln, i) => prims.push(text(pad + 42, y + 6 + qs + i * qs * 1.35, ln, qs, { bold: true })))
       y += quoteH
     }
@@ -1589,10 +1674,11 @@ export const changelogDef: ComponentDef = {
   group: "Content",
   keywords: ["releases", "updates", "versions", "history", "notes"],
   size: { w: 720, h: 400 },
-  defaults: { entries: 3, heading: true },
+  defaults: { entries: 3, heading: true, headline: "Changelog" },
   controls: [
     { key: "entries", label: "Entries", type: "number", min: 1, max: 4, quick: true },
-    { key: "heading", label: "Heading", type: "toggle", quick: true },
+    { key: "heading", label: "Show headline", type: "toggle", quick: true },
+    { key: "headline", label: "Headline", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1602,7 +1688,7 @@ export const changelogDef: ComponentDef = {
     if (bool(p, "heading")) {
       const head = headBlock(pad, top, w - pad * 2, {
         eyebrow: "what changed",
-        heading: "Changelog",
+        heading: str(p, "headline", "Changelog"),
         size: clamp(w * 0.032, 16, 24),
       })
       prims.push(...head.prims)
@@ -1646,11 +1732,12 @@ export const contactFormBlockDef: ComponentDef = {
   group: "Content",
   keywords: ["contact", "message", "support", "email us", "form"],
   size: { w: 780, h: 420 },
-  defaults: { split: true, heading: "Say hello", details: true },
+  defaults: { split: true, heading: "Say hello", details: true, cta: "Send it" },
   controls: [
     { key: "split", label: "Split layout", type: "toggle", quick: true },
     { key: "details", label: "Contact details", type: "toggle", quick: true },
     { key: "heading", label: "Heading", type: "text" },
+    { key: "cta", label: "Button label", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1732,7 +1819,7 @@ export const contactFormBlockDef: ComponentDef = {
       y += areaH + 12
     }
     if (y + btnH <= h - vpad + 6) {
-      const label = "Send it"
+      const label = str(p, "cta", "Send it")
       const bw = Math.min(btnW(label), formW)
       prims.push(...sub(buttonDef, { label, variant: "filled" }, formX + formW - bw, y, bw, btnH))
     }
@@ -1749,12 +1836,21 @@ export const breadcrumbHeaderDef: ComponentDef = {
   group: "Content",
   keywords: ["breadcrumb", "title", "actions", "toolbar", "page head"],
   size: { w: 760, h: 120 },
-  defaults: { title: "Sketchbook", actions: 2, trail: "Home, Library, Sketchbook", divider: true },
+  defaults: {
+    title: "Sketchbook",
+    actions: 2,
+    trail: "Home, Library, Sketchbook",
+    divider: true,
+    cta: "New sketch",
+    cta2: "Share",
+  },
   controls: [
     { key: "title", label: "Title", type: "text" },
-    { key: "trail", label: "Breadcrumb", type: "text" },
+    { key: "trail", label: "Breadcrumb (comma-sep)", type: "text" },
     { key: "actions", label: "Actions", type: "number", min: 0, max: 2, quick: true },
     { key: "divider", label: "Divider", type: "toggle", quick: true },
+    { key: "cta", label: "Button label", type: "text" },
+    { key: "cta2", label: "Second button label", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -1766,13 +1862,19 @@ export const breadcrumbHeaderDef: ComponentDef = {
     const bh = clamp(h * 0.3, 30, 38)
     let right = w - pad
     if (nAct > 0) {
-      const l1 = "New sketch"
-      const w1 = btnW(l1, 14)
+      const l1 = str(p, "cta", "New sketch")
+      const l2 = str(p, "cta2", "Share")
+      // keep at least ~40% of the strip for the title, shrinking both buttons to fit
+      const budget = Math.max(80, (w - pad * 2) * 0.6)
+      const raw1 = btnW(l1, 14)
+      const raw2 = nAct > 1 ? btnW(l2, 14) : 0
+      const need = raw1 + (nAct > 1 ? raw2 + 10 : 0)
+      const k = need > budget ? budget / need : 1
+      const w1 = raw1 * k
+      const w2 = raw2 * k
       prims.push(...sub(buttonDef, { label: l1, variant: "filled", size: "sm" }, right - w1, y, w1, bh))
       right -= w1 + 10
       if (nAct > 1) {
-        const l2 = "Share"
-        const w2 = btnW(l2, 14)
         prims.push(...sub(buttonDef, { label: l2, variant: "outline", size: "sm" }, right - w2, y, w2, bh))
         right -= w2 + 10
       }

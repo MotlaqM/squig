@@ -333,10 +333,11 @@ export const sliderDef: ComponentDef = {
     { key: "label", label: "Label", type: "text" },
     { key: "showLabel", label: "Show label", type: "toggle", quick: true },
     { key: "value", label: "Value", type: "number", min: 0, max: 100, quick: true },
-    { key: "showValue", label: "Show value", type: "toggle" },
+    { key: "showValue", label: "Show value", type: "toggle", quick: true },
   ],
   render(p, w, h) {
-    const v = Math.max(0, Math.min(100, num(p, "value", 60))) / 100
+    const raw = Math.max(0, Math.min(100, num(p, "value", 60)))
+    const v = raw / 100
     // Below 26px tall the label would sit on top of the track, so it steps aside.
     const showLabel = bool(p, "showLabel") && h >= 26
     const top = showLabel ? Math.min(22, h * 0.5) : 0
@@ -358,7 +359,9 @@ export const sliderDef: ComponentDef = {
     if (bool(p, "showValue")) {
       // The label pushes the track down; keep the number off the bottom edge.
       const vy = showLabel ? Math.min(cy + 5, h - 4) : cy + 5
-      prims.push(text(trackW + 8, vy, String(num(p, "value", 60)), 13, { color: "muted" }))
+      // Same number the knob is standing on, and short enough for the 36px
+      // the track gave up — "33.333" would run off the right edge.
+      prims.push(text(trackW + 8, vy, String(Math.round(raw)), 13, { color: "muted" }))
     }
     return prims
   },

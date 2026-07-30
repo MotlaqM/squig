@@ -15,6 +15,17 @@ const str = (p: Props, k: string, fallback = ""): string => String(p[k] ?? fallb
 // from props that predate the key must land on the old hardcoded behaviour
 const bool = (p: Props, k: string, fallback = false): boolean => (p[k] === undefined ? fallback : Boolean(p[k]))
 const num = (p: Props, k: string, fallback = 0): number => Number(p[k] ?? fallback)
+// comma-separated list: blanks dropped, and an emptied field falls back to the
+// default list so clearing the box restores the block instead of blanking it
+const list = (p: Props, k: string, fallback: string): string[] => {
+  const out = str(p, k, fallback)
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return out.length ? out : fallback.split(",").map((s) => s.trim())
+}
+/** safe indexed pick from a cycling pool — a short list repeats instead of drawing blanks */
+const pick = (pool: string[], i: number): string => pool[((i % pool.length) + pool.length) % pool.length]
 
 function sub(def: ComponentDef, props: Props, x: number, y: number, w: number, h: number): Prim[] {
   return place(def.render({ ...def.defaults, ...props }, w, h), x, y)
@@ -314,10 +325,17 @@ export const pricingDef: ComponentDef = {
   group: "Screens",
   keywords: ["plans", "tiers", "billing", "money"],
   size: { w: 680, h: 400 },
-  defaults: { plans: 3, highlight: 2 },
+  defaults: {
+    plans: 3,
+    highlight: 2,
+    names: "Doodle, Sketch, Masterpiece, Gallery",
+    prices: "$0, $12, $49, $199",
+  },
   controls: [
     { key: "plans", label: "Plans", type: "number", min: 2, max: 4, quick: true },
     { key: "highlight", label: "Highlighted", type: "number", min: 0, max: 4, quick: true },
+    { key: "names", label: "Plan names (comma-sep)", type: "text" },
+    { key: "prices", label: "Prices (comma-sep)", type: "text" },
   ],
   render(p, w, h) {
     const prims: Prim[] = []
@@ -325,8 +343,8 @@ export const pricingDef: ComponentDef = {
     const hi = num(p, "highlight", 2)
     const gap = 18
     const cardW = (w - gap * (n - 1)) / n
-    const names = ["Doodle", "Sketch", "Masterpiece", "Gallery"]
-    const prices = ["$0", "$12", "$49", "$199"]
+    const names = list(p, "names", "Doodle, Sketch, Masterpiece, Gallery")
+    const prices = list(p, "prices", "$0, $12, $49, $199")
     for (let i = 0; i < n; i++) {
       const x = i * (cardW + gap)
       const isHi = i + 1 === hi
@@ -338,9 +356,9 @@ export const pricingDef: ComponentDef = {
         prims.push(text(x + cardW / 2, y0 + 18, "most popular", 12, { align: "center" }))
       }
       let y = y0 + (isHi ? 50 : 34)
-      prims.push(text(x + cardW / 2, y, names[i], 17, { align: "center", bold: true }))
+      prims.push(text(x + cardW / 2, y, truncate(pick(names, i), 17, cardW - 24), 17, { align: "center", bold: true }))
       y += 34
-      prims.push(text(x + cardW / 2, y, prices[i], 26, { align: "center", bold: true }))
+      prims.push(text(x + cardW / 2, y, truncate(pick(prices, i), 26, cardW - 24), 26, { align: "center", bold: true }))
       prims.push(text(x + cardW / 2, y + 16, "/month-ish", 11, { align: "center", color: "muted" }))
       y += 36
       const feats = Math.min(4, Math.floor((h - y - 70) / 26))
@@ -412,7 +430,7 @@ export const emptyStateDef: ComponentDef = {
   defaults: { title: "Nothing here yet", cta: true, icon: "image" },
   controls: [
     { key: "title", label: "Title", type: "text" },
-    { key: "icon", label: "Icon", type: "select", options: ["image", "file", "search", "star"], quick: true },
+    { key: "icon", label: "Icon", type: "select", options: ["image", "folder", "file", "magnifying-glass", "star", "sparkle", "bell"], quick: true },
     { key: "cta", label: "Button", type: "toggle", quick: true },
   ],
   render(p, w, h) {
@@ -425,7 +443,7 @@ export const emptyStateDef: ComponentDef = {
     const cy = h * 0.34
     const ring = 88 * k
     prims.push(ellipse(w / 2 - ring / 2, cy - ring / 2, ring, ring, { fill: "shade", fillColor: "faint" }))
-    prims.push(...icon(str(p, "icon", "image") as "image", w / 2, cy, 40 * k, { stroke: "muted" }))
+    prims.push(...icon(str(p, "icon", "image"), w / 2, cy, 40 * k, { stroke: "muted" }))
     prims.push(text(w / 2, cy + g(76), str(p, "title", "Nothing here yet"), 19, { align: "center", bold: true }))
     prims.push(line(w / 2 - w * 0.28, cy + g(96), w / 2 + w * 0.28, cy + g(96), { stroke: "muted", strokeWidth: 1.2 }))
     const by = cy + g(116)

@@ -21,10 +21,11 @@ export const cardDef: ComponentDef = {
   group: "Display",
   keywords: ["panel", "box", "container"],
   size: { w: 260, h: 240 },
-  defaults: { title: "Card title", image: true, header: true, footer: true, actions: false, cta: "Go", secondary: true },
+  defaults: { title: "Card title", image: true, header: true, footer: true, actions: false, cta: "Go", cta2: "Nope", secondary: true },
   controls: [
     { key: "title", label: "Title", type: "text" },
     { key: "cta", label: "Button", type: "text" },
+    { key: "cta2", label: "Second label", type: "text" },
     { key: "image", label: "Image", type: "toggle", quick: true },
     { key: "header", label: "Header", type: "toggle", quick: true },
     { key: "footer", label: "Footer", type: "toggle", quick: true },
@@ -55,15 +56,19 @@ export const cardDef: ComponentDef = {
       prims.push(line(0, fy, w, fy, { stroke: "faint" }))
       const secondary = bool(p, "secondary")
       const label = str(p, "cta", "Go")
-      // leave room for "Nope" when it's there, and never let the button eat the card
+      // leave room for the quiet link when it's there, and never let the button eat the card
       const cap = Math.max(40, w - 16 - (secondary ? 52 : 20))
       const bw = Math.min(Math.max(80, textWidth(label, 13) + 28), cap)
       const bx = w - 16 - bw
       prims.push(rect(bx, fy + 9, bw, 28, { fill: "shade", fillColor: "ink" }))
       prims.push(text(bx + bw / 2, fy + 27, truncate(label, 13, bw - 20), 13, { align: "center" }))
-      // on a very narrow card the button wins and the quiet link steps aside
-      if (secondary && bx > 16 + textWidth("Nope", 13) + 8) {
-        prims.push(text(16, fy + 27, "Nope", 13, { color: "muted" }))
+      // an emptied label draws nothing at all, rather than a blank run that
+      // only shows up as a stray text node once you break the card apart
+      const sec = str(p, "cta2", "Nope").trim()
+      // the quiet link gets whatever the button leaves; below a few characters' worth it steps aside
+      const secW = bx - 24
+      if (secondary && sec && secW >= 24) {
+        prims.push(text(16, fy + 27, truncate(sec, 13, secW), 13, { color: "muted" }))
       }
     }
     return prims
@@ -217,7 +222,7 @@ export const tabsDef: ComponentDef = {
   defaults: { labels: "Overview, Details, Reviews", active: 1 },
   controls: [
     { key: "labels", label: "Tabs (comma-sep)", type: "text" },
-    { key: "active", label: "Active tab", type: "number", min: 1, max: 6, quick: true },
+    { key: "active", label: "Active", type: "number", min: 1, max: 6, quick: true },
   ],
   render(p, w, h) {
     const labels = list(p, "labels", "Overview, Details, Reviews")
