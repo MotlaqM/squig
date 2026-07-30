@@ -5,6 +5,7 @@
 // ---------------------------------------------------------------------------
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react"
+import { copySelection, pasteFromSystem } from "@/lib/clipboard"
 import { useSquig } from "@/lib/store"
 import { screenToWorld } from "@/lib/types"
 import { getDef } from "@/lib/library/registry"
@@ -64,7 +65,6 @@ export function CanvasContextMenu() {
   const nodes = useSquig((s) => s.nodes)
   const selection = useSquig((s) => s.selection)
   const contextRow = useSquig((s) => s.contextRow)
-  const clipboard = useSquig((s) => s.clipboard)
   const st = useSquig.getState
   const ref = useRef<HTMLDivElement>(null)
   const [pos, setPos] = useState({ x: 0, y: 0 })
@@ -114,7 +114,7 @@ export function CanvasContextMenu() {
   if (menu.nodeId) {
     entries = [
       { label: "Duplicate", hint: kbd("mod+d"), icon: CopyIcon, run: () => st().duplicateSelected() },
-      { label: "Copy", hint: kbd("mod+c"), icon: CopySimpleIcon, run: () => st().copySelected() },
+      { label: "Copy", hint: kbd("mod+c"), icon: CopySimpleIcon, run: copySelection },
       { label: "Copy as PNG", hint: kbd("mod+shift+c"), icon: ImageIcon, run: copyAsPngWithNotice },
       ...(targets.length > 1
         ? [{ label: "Group", hint: kbd("mod+g"), icon: BoundingBoxIcon, run: () => st().groupSelected() } as Entry]
@@ -160,9 +160,9 @@ export function CanvasContextMenu() {
       { label: "Blocks", hint: kbd("b"), icon: StackIcon, run: () => st().setPanel("blocks") },
       { separator: true },
       { label: "Select all", hint: kbd("mod+a"), icon: SelectionAllIcon, run: () => st().setSelection([...st().order]) },
-      ...(clipboard.length
-        ? [{ label: "Paste here", hint: kbd("mod+v"), icon: ClipboardTextIcon, run: () => pasteAt(menu.x, menu.y) } as Entry]
-        : []),
+      // always offered now: whatever is on the system clipboard is something
+      // this can paste, and there is no way to know what that is from here
+      { label: "Paste here", hint: kbd("mod+v"), icon: ClipboardTextIcon, run: () => pasteAt(menu.x, menu.y) },
       ...(Object.keys(nodes).length
         ? [{ label: "Copy canvas as PNG", hint: kbd("mod+shift+c"), icon: ImageIcon, run: copyAsPngWithNotice } as Entry]
         : []),
@@ -229,5 +229,7 @@ export function CanvasContextMenu() {
 /** Drop the clipboard where the menu was opened. */
 function pasteAt(sx: number, sy: number) {
   const s = useSquig.getState()
-  s.pasteClipboard(screenToWorld(s.viewport, sx, sy))
+  // a menu click is a gesture, so the browser will let us ask for the real
+  // clipboard here — squig's own is the fallback inside pasteFromSystem
+  void pasteFromSystem(screenToWorld(s.viewport, sx, sy))
 }

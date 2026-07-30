@@ -18,7 +18,7 @@
 // Miss either one and the PNG comes back black-on-nothing in Times New Roman.
 // ---------------------------------------------------------------------------
 
-import { mirrorGlyphs, primsToPaths } from "@/components/canvas/sketch"
+import { mirrorBox, mirrorGlyphs, primsToPaths } from "@/components/canvas/sketch"
 import { INK } from "./sketch/kit"
 import { nodePrims } from "./sketch/node-prims"
 import { unionBounds } from "./selection"
@@ -78,6 +78,19 @@ function makeResolver(p: Palette): (paint: string) => string {
 function nodeMarkup(node: SquigNode, resolve: (paint: string) => string, font: string): string {
   const { paths, texts, crisp } = primsToPaths(nodePrims(node), node.seed)
   const out: string[] = []
+
+  // A pasted picture is the one node that isn't made of marks, so it has to be
+  // written out itself or the PNG comes back with an empty frame where the
+  // screenshot was. Its pixels are already a data URL, which is both what
+  // makes the SVG standalone and what keeps the canvas untainted when this is
+  // rasterised — an external src would do neither.
+  if (node.type === "image") {
+    const mirror = mirrorBox(node.w, node.h, node.flipX, node.flipY)
+    out.push(
+      `<image href="${esc(node.src)}" x="0" y="0" width="${node.w}" height="${node.h}"` +
+        ` preserveAspectRatio="none"${mirror ? ` transform="${esc(mirror)}"` : ""}/>`
+    )
+  }
 
   for (const p of paths) {
     out.push(
