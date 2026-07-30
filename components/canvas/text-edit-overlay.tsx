@@ -12,6 +12,7 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useSquig } from "@/lib/store"
 import type { SquigNode, TextNode, ComponentNode } from "@/lib/types"
 import { getDef } from "@/lib/library/registry"
+import { LINE_HEIGHT, reflowText } from "@/lib/text"
 
 export function TextEditOverlay() {
   const editingId = useSquig((s) => s.editingId)
@@ -61,14 +62,8 @@ function Editor({ node }: { node: SquigNode }) {
       if (!trimmed) {
         s.removeNodes([node.id], { checkpoint: false })
       } else {
-        const lines = trimmed.split("\n")
-        const fs = (node as TextNode).fontSize
-        const wGuess = Math.max(...lines.map((l) => l.length)) * fs * 0.5 + 10
-        s.updateNode(node.id, {
-          text: trimmed,
-          w: Math.max(40, wGuess),
-          h: lines.length * fs * 1.35,
-        } as Partial<SquigNode>)
+        const t = node as TextNode
+        s.updateNode(node.id, reflowText(t, trimmed, t.fontSize) as Partial<SquigNode>)
       }
     } else if (textControlKey) {
       s.updateNode(node.id, {
@@ -154,7 +149,9 @@ function Editor({ node }: { node: SquigNode }) {
         height: Math.max(node.h * v.zoom + 12, fontSize * 1.8),
         fontSize,
         fontFamily: "var(--sq-font)",
-        lineHeight: 1.35,
+        // so a centred run is still centred while you type it
+        textAlign: isText ? ((node as TextNode).align ?? "left") : "left",
+        lineHeight: LINE_HEIGHT,
         color: "var(--sq-ink)",
         background: "rgba(255,255,255,0.92)",
         border: "1.5px dashed var(--sq-select)",

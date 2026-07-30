@@ -16,6 +16,7 @@ import type { RoughGenerator } from "roughjs/bin/generator"
 import { INK, SHADE, mirrorPrims, type InkColor, type Prim, type PrimOpts } from "@/lib/sketch/kit"
 import { normalizeFill, type FillTone, type Outlined, type SquigNode, type StrokeWeight } from "@/lib/types"
 import { renderComponent } from "@/lib/library/registry"
+import { textAnchorX } from "@/lib/text"
 
 const gen: RoughGenerator = rough.generator()
 
@@ -301,8 +302,9 @@ export const NodeSketch = memo(function NodeSketch({ node }: { node: SquigNode }
         return `d:${node.points.length}:${node.w}:${node.h}:${flip}:${node.points[0]?.join()}:${node.points.at(-1)?.join()}:${pen}`
       case "arrow":
         return `a:${node.w}:${node.h}:${flip}:${node.head}:${node.points.flat().join()}:${pen}`
+      // the box is in the key because alignment anchors the lines against it
       case "text":
-        return `t:${node.text}:${node.fontSize}:${flip}:${node.bold ? 1 : 0}${node.italic ? 1 : 0}${node.underline || node.link ? 1 : 0}`
+        return `t:${node.text}:${node.fontSize}:${node.w}:${node.align ?? "left"}:${flip}:${node.bold ? 1 : 0}${node.italic ? 1 : 0}${node.underline || node.link ? 1 : 0}`
     }
   }, [node])
 
@@ -381,17 +383,24 @@ function basePrims(node: SquigNode): Prim[] {
       }
       return out
     }
-    case "text":
+    case "text": {
+      // every line hangs off the same anchor; which edge that is, is the
+      // alignment. Lines are only ever as wide as their own words, so this is
+      // the whole of what alignment does.
+      const align = node.align ?? "left"
+      const x = textAnchorX(node.w, align)
       return node.text.split("\n").map((lineText, i): Prim => ({
         t: "text",
-        x: 0,
+        x,
         y: node.fontSize * (i + 1),
         text: lineText,
         size: node.fontSize,
+        align,
         bold: node.bold,
         italic: node.italic,
         // a link is a link because it's underlined — no blue in a wireframe
         underline: node.underline || !!node.link,
       }))
+    }
   }
 }

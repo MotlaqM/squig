@@ -102,7 +102,10 @@ export function breakApart(node: ComponentNode): SquigNode[] {
           id: nanoid(8), type: "text",
           x: node.x + x, y: node.y + p.y - p.size,
           w: Math.max(approxW, 20), h: p.size * 1.4,
-          text: p.text, fontSize: p.size,
+          // the box is already sized and placed around the run, so carrying the
+          // alignment over changes nothing on screen — it just means editing the
+          // words afterwards keeps them centred instead of springing left
+          text: p.text, fontSize: p.size, align: p.align,
           seed: seed(),
         })
         break

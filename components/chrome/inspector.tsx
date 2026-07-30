@@ -20,11 +20,13 @@ import { normalizeFill } from "@/lib/types"
 import { getDef } from "@/lib/library/registry"
 import { selectionSummary, shared, sharedControls, sharedNumber, unionBounds } from "@/lib/selection"
 import { scaleNodes, MIN_SIZE } from "@/lib/canvas/transform"
+import { reflowText } from "@/lib/text"
 import { VariantControl } from "./variant-controls"
 import { MixedNumberField, MixedSwitch, MixedTextField } from "./mixed-fields"
 import { AlignRow } from "./align-row"
+import { TEXT_ALIGN_OPTIONS, TextStyleToggles, sharedAlign } from "./text-controls"
 import { Panel, PanelFooter, PanelHeader, PanelNote, PanelSection, Row, StackRow } from "@/components/ui/panel"
-import { IconAction, IconToggle, Segmented, type SegmentOption } from "@/components/ui/segmented"
+import { IconAction, Segmented, type SegmentOption } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -34,9 +36,6 @@ import {
   FlipVerticalIcon,
   LinkBreakIcon,
   SelectionAllIcon,
-  TextBIcon,
-  TextItalicIcon,
-  TextUnderlineIcon,
   TrashIcon,
 } from "@phosphor-icons/react"
 import { kbd } from "@/lib/shortcuts"
@@ -116,14 +115,6 @@ const STROKE_OPTIONS: readonly SegmentOption<StrokeWeight>[] = [
   { value: "regular", label: "Regular pen", content: <PenChip height={1.75} /> },
   { value: "heavy", label: "Heavy pen", content: <PenChip height={3} /> },
 ]
-
-/** Drawn as icons, not as styled letters — a glyph small enough to fit the
-    toggle is too small to read as bold-versus-regular at a glance. */
-const TEXT_STYLES = [
-  { key: "bold", label: "Bold", icon: TextBIcon },
-  { key: "italic", label: "Italic", icon: TextItalicIcon },
-  { key: "underline", label: "Underline", icon: TextUnderlineIcon },
-] as const
 
 // ---------------------------------------------------------------------------
 
@@ -381,21 +372,20 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
           </StackRow>
 
           <Row label="Style">
-            {TEXT_STYLES.map(({ key, label, icon: Icon }) => {
-              const on = shared(texts.map((n) => !!n[key]))
-              return (
-                <IconToggle
-                  key={key}
-                  label={label}
-                  hint={kbd(`mod+${key[0]}`)}
-                  pressed={!on.mixed && on.value}
-                  mixed={on.mixed}
-                  onPressedChange={() => st().toggleTextStyle(key)}
-                >
-                  <Icon className="size-4" />
-                </IconToggle>
-              )
-            })}
+            <TextStyleToggles texts={texts} />
+          </Row>
+
+          {/* Alignment is against the text's own box, so it has something to do
+              once that box is wider than a line — a second line, or a box you
+              dragged out. A one-line box is exactly its words, so all three
+              land in the same place, which is the honest answer. */}
+          <Row label="Align">
+            <Segmented
+              ariaLabel="Text alignment"
+              options={TEXT_ALIGN_OPTIONS}
+              shared={sharedAlign(texts)}
+              onChange={(a) => st().setTextAlign(a)}
+            />
           </Row>
 
           {/* A link is a value, not a mode — so it gets a field showing where
@@ -551,11 +541,4 @@ function isOutlined(n: SquigNode): boolean {
 function resizeTo(n: SquigNode, w: number, h: number): Partial<SquigNode> {
   const from = unionBounds([n])!
   return scaleNodes([n], from, { x: n.x, y: n.y, w, h })[n.id]
-}
-
-/** Text nodes size themselves from their content — keep the box honest. */
-function reflowText(n: TextNode, text: string, fontSize: number): Partial<TextNode> {
-  const lines = (text || " ").split("\n")
-  const wGuess = Math.max(...lines.map((l) => l.length)) * fontSize * 0.5 + 10
-  return { text, fontSize, w: Math.max(40, wGuess), h: lines.length * fontSize * 1.35 }
 }

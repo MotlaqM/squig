@@ -81,10 +81,18 @@ export interface DrawNode extends BaseNode, Outlined {
   points: [number, number][]
 }
 
+/**
+ * Where a text node's lines sit inside its own box. Left is the default, so an
+ * older document with no `align` reads as left without a migration.
+ */
+export type TextAlign = "left" | "center" | "right"
+
 export interface TextNode extends BaseNode {
   type: "text"
   text: string
   fontSize: number
+  /** absent means left — see TextAlign */
+  align?: TextAlign
   bold?: boolean
   italic?: boolean
   underline?: boolean
