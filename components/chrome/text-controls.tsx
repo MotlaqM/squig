@@ -26,7 +26,7 @@ import type { TextAlign, TextNode } from "@/lib/types"
 import { shared, type Shared } from "@/lib/selection"
 import { kbd } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
-import { IconToggle, type SegmentOption } from "@/components/ui/segmented"
+import { IconToggle, SegmentedToggles, type SegmentOption } from "@/components/ui/segmented"
 
 // ---------------------------------------------------------------------------
 
@@ -55,29 +55,36 @@ export function sharedAlign(texts: readonly TextNode[]): Shared<TextAlign> {
 
 // ---------------------------------------------------------------------------
 
-/** Bold / italic / underline over a possibly-mixed selection of text nodes. */
-export function TextStyleToggles({ texts }: { texts: readonly TextNode[] }) {
+/**
+ * Bold / italic / underline over a possibly-mixed selection of text nodes.
+ *
+ * In the panel they ride a track, so the Style row and the Align row under it
+ * are visibly the same kind of control. The context row has no tracks at all —
+ * alignment there is a single button — so `compact` drops the rail and leaves
+ * three bare toggles, which is what the rest of that row is made of.
+ */
+export function TextStyleToggles({ texts, compact = false }: { texts: readonly TextNode[]; compact?: boolean }) {
   const st = useSquig.getState
 
-  return (
-    <>
-      {TEXT_STYLES.map(({ key, label, icon: Icon }) => {
-        const on = shared(texts.map((n) => !!n[key]))
-        return (
-          <IconToggle
-            key={key}
-            label={label}
-            hint={kbd(`mod+${key[0]}`)}
-            pressed={!on.mixed && on.value}
-            mixed={on.mixed}
-            onPressedChange={() => st().toggleTextStyle(key)}
-          >
-            <Icon className="size-4" />
-          </IconToggle>
-        )
-      })}
-    </>
-  )
+  const toggles = TEXT_STYLES.map(({ key, label, icon: Icon }) => {
+    const on = shared(texts.map((n) => !!n[key]))
+    return (
+      <IconToggle
+        key={key}
+        segment={!compact}
+        label={label}
+        hint={kbd(`mod+${key[0]}`)}
+        pressed={!on.mixed && on.value}
+        mixed={on.mixed}
+        onPressedChange={() => st().toggleTextStyle(key)}
+      >
+        <Icon className="size-4" />
+      </IconToggle>
+    )
+  })
+
+  if (compact) return <>{toggles}</>
+  return <SegmentedToggles ariaLabel="Text style">{toggles}</SegmentedToggles>
 }
 
 // ---------------------------------------------------------------------------

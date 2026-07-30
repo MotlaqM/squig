@@ -165,7 +165,7 @@ export function ContextRow({
             }
           />
           <span className="h-4 w-px bg-border" />
-          <TextStyleToggles texts={texts} />
+          <TextStyleToggles texts={texts} compact />
           <TextAlignMenu texts={texts} />
         </div>
       )}
