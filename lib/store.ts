@@ -6,10 +6,18 @@ import type { ComponentNode, SquigNode, TextNode, Tool, Viewport, ShapeKind } fr
 import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { getDef } from "./library/registry"
 import { breakApart } from "./library/break-apart"
-import { applyTheme, DEFAULT_FONT, DEFAULT_THEME, type FontMode, type ThemeName } from "./theme"
+import {
+  applyLook,
+  DEFAULT_LOOK,
+  type FontMode,
+  type Look,
+  type PaperShade,
+  type ThemeName,
+} from "./theme"
 import {
   INDEX_KEY,
   deleteFile as dropFile,
+  knownLook,
   listFiles,
   loadPrefs,
   migrateLegacyDoc,
@@ -65,8 +73,15 @@ interface SquigState {
   placingDrag: boolean
   editingId: string | null
   contextRow: boolean
+  /* --- the look, kept flat so a control can subscribe to just its own knob.
+     It belongs to the open document: every setter writes it back to the file,
+     and opening another one brings that file's look with it. */
   theme: ThemeName
   font: FontMode
+  /** how bright the sheet behind the drawing is */
+  paper: PaperShade
+  /** the canvas dot grid is drawn */
+  grid: boolean
   hydrated: boolean
   commandOpen: boolean
   contextMenu: ContextMenuState | null
@@ -96,6 +111,8 @@ interface SquigState {
   setContextRow: (on: boolean) => void
   setTheme: (t: ThemeName) => void
   setFont: (f: FontMode) => void
+  setPaper: (s: PaperShade) => void
+  setGrid: (on: boolean) => void
   setViewport: (v: Viewport) => void
   setSelection: (ids: string[]) => void
   setCommandOpen: (open: boolean) => void
@@ -289,6 +306,18 @@ let saveTimer: ReturnType<typeof setTimeout> | null = null
 /** true between an edit and the write that records it */
 let dirty = false
 
+/** The four knobs that make up a look, gathered out of the flat state. */
+function lookOf(s: Pick<SquigState, "theme" | "paper" | "font" | "grid">): Look {
+  return { theme: s.theme, paper: s.paper, font: s.font, grid: s.grid }
+}
+
+/** Put a look on screen and in state — the one path both the panel and an
+    opened file go through, so they can't drift apart. */
+function wearLook(set: (partial: Partial<SquigState>) => void, look: Look) {
+  set(look)
+  applyLook(look)
+}
+
 /** Every edit calls this; the drawer only gets written once the hand rests. */
 function scheduleSave(get: () => SquigState) {
   dirty = true
@@ -310,7 +339,9 @@ function flushSave(get: () => SquigState, force = false) {
     saveTimer = null
   }
   const s = get()
-  savePrefs({ theme: s.theme, font: s.font, contextRow: s.contextRow, activeId: s.docId })
+  // the look goes to prefs too, but only as the default a new file will start
+  // from — the copy that matters travels inside the document below
+  savePrefs({ look: lookOf(s), contextRow: s.contextRow, activeId: s.docId })
   if (!dirty && !force) return
   const known = s.files.some((f) => f.id === s.docId)
   if (!s.order.length && !known && !force) return
@@ -320,6 +351,7 @@ function flushSave(get: () => SquigState, force = false) {
     nodes: s.nodes,
     order: s.order,
     updatedAt: Date.now(),
+    look: lookOf(s),
   })
   useSquig.setState({ files })
   dirty = false
@@ -363,8 +395,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   placingDrag: false,
   editingId: null,
   contextRow: false,
-  theme: DEFAULT_THEME,
-  font: DEFAULT_FONT,
+  ...DEFAULT_LOOK,
   hydrated: false,
   commandOpen: false,
   contextMenu: null,
@@ -391,14 +422,21 @@ export const useSquig = create<SquigState>((set, get) => ({
     set({ contextRow: on })
     scheduleSave(get)
   },
+  // each of these edits the open document, so each schedules a save
   setTheme: (t) => {
-    set({ theme: t })
-    applyTheme(t, get().font)
+    wearLook(set, { ...lookOf(get()), theme: t })
     scheduleSave(get)
   },
   setFont: (f) => {
-    set({ font: f })
-    applyTheme(get().theme, f)
+    wearLook(set, { ...lookOf(get()), font: f })
+    scheduleSave(get)
+  },
+  setPaper: (p) => {
+    wearLook(set, { ...lookOf(get()), paper: p })
+    scheduleSave(get)
+  },
+  setGrid: (on) => {
+    wearLook(set, { ...lookOf(get()), grid: on })
     scheduleSave(get)
   },
   setViewport: (v) => set({ viewport: v }),
@@ -626,11 +664,11 @@ export const useSquig = create<SquigState>((set, get) => ({
       order: clean.order,
       files,
       contextRow: prefs.contextRow,
-      theme: prefs.theme,
-      font: prefs.font,
       hydrated: true,
     })
-    applyTheme(prefs.theme, prefs.font)
+    // the document's own look, or — for one saved before looks existed — the
+    // last look this browser was set to
+    wearLook(set, doc?.look ?? prefs.look)
     // what we just read is, by definition, what the drawer already holds
     dirty = false
     watchWindow(get)
@@ -1009,6 +1047,9 @@ export const useSquig = create<SquigState>((set, get) => ({
       past: [],
       future: [],
     })
+    // a drawing carries its own ink and paper; one saved before looks existed
+    // keeps whatever is on screen rather than snapping to a default
+    if (doc.look) wearLook(set, doc.look)
     // frame what's there, but never past life size — 400% on one small
     // rectangle tells you nothing about where you've landed
     if (clean.order.length) fitBox(set, clean.order.map((nid) => clean.nodes[nid]), 1)
@@ -1043,8 +1084,9 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   serialize: () => {
-    const { fileName, nodes, order } = get()
-    return JSON.stringify({ app: "squig", version: 1, fileName, nodes, order }, null, 2)
+    const s = get()
+    const { fileName, nodes, order } = s
+    return JSON.stringify({ app: "squig", version: 1, fileName, look: lookOf(s), nodes, order }, null, 2)
   },
 
   loadDoc: (json) => {
@@ -1066,6 +1108,8 @@ export const useSquig = create<SquigState>((set, get) => ({
         past: [],
         future: [],
       })
+      // an import brings its author's ink and paper with it, when it has any
+      if (doc.look) wearLook(set, knownLook(doc.look, lookOf(get())))
       // an imported file was drawn wherever its author left it — go there,
       // or the canvas looks empty when it isn't
       if (clean.order.length) fitBox(set, clean.order.map((id) => clean.nodes[id]), 1)
