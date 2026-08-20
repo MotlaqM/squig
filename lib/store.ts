@@ -105,8 +105,6 @@ interface SquigState {
   renamingFile: boolean
   /** a gesture is actively changing a layer's geometry — move, resize, draw, create */
   transforming: boolean
-  /** the arrow tool draws a head — L is a plain line, ⇧L an arrow */
-  arrowHead: boolean
   /** ⌘\ — everything but the canvas gets out of the way */
   uiHidden: boolean
   shortcutsOpen: boolean
@@ -158,7 +156,6 @@ interface SquigState {
   setContextMenu: (m: ContextMenuState | null) => void
   setRenamingFile: (on: boolean) => void
   setTransforming: (on: boolean) => void
-  setArrowHead: (on: boolean) => void
   setUiHidden: (on: boolean) => void
   setShortcutsOpen: (on: boolean) => void
   setLinkOpen: (on: boolean) => void
@@ -789,7 +786,6 @@ export const useSquig = create<SquigState>((set, get) => ({
   contextMenu: null,
   renamingFile: false,
   transforming: false,
-  arrowHead: true,
   uiHidden: false,
   shortcutsOpen: false,
   linkOpen: false,
@@ -904,7 +900,6 @@ export const useSquig = create<SquigState>((set, get) => ({
   // called on the edges of a drag, so the hundreds of moves in between don't
   // each write to the store
   setTransforming: (on) => set((s) => (s.transforming === on ? s : { transforming: on })),
-  setArrowHead: (on) => set({ arrowHead: on }),
   setUiHidden: (on) => set({ uiHidden: on }),
   setShortcutsOpen: (on) => set({ shortcutsOpen: on, commandOpen: false, contextMenu: null }),
   setLinkOpen: (on) => set({ linkOpen: on, contextMenu: null }),
