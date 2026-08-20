@@ -7,7 +7,7 @@
 // keep moving endpoints without having to own a second path model.
 // ---------------------------------------------------------------------------
 
-import type { ArrowAnchor, ArrowNode, LineStyle } from "../types"
+import type { ArrowAnchor, ArrowNode, LineStyle, SquigNode } from "../types"
 import { normalizeLineStyle } from "../types"
 import { mirrorPoint } from "./transform"
 
@@ -198,18 +198,33 @@ function localToWorld(n: ArrowNode, p: LinePoint): LinePoint {
 }
 
 /** A polyline approximation in world space, for hit tests and visual bounds. */
-export function sampleArrowRoute(n: ArrowNode, curveSteps = 24): LinePoint[] {
+function quadraticPoint(
+  start: LinePoint,
+  control: LinePoint,
+  end: LinePoint,
+  t: number
+): LinePoint {
+  const mt = 1 - t
+  return [
+    mt * mt * start[0] + 2 * mt * t * control[0] + t * t * end[0],
+    mt * mt * start[1] + 2 * mt * t * control[1] + t * t * end[1],
+  ]
+}
+
+export function sampleArrowRoute(n: ArrowNode, curveSteps?: number): LinePoint[] {
   const route = localArrowRoute(n)
   if (route.kind === "polyline") return route.points.map((p) => localToWorld(n, p))
+  // Twenty-four runs are plenty for the automatic bow. A hand can pull the
+  // midpoint arbitrarily far away, though, and a fixed count then leaves wide
+  // chords that miss both pointer hit tests and marquee intersections. Scale
+  // by the square root of the bend (quadratic chord error falls with n²), with
+  // a guardrail so one wild connector cannot monopolise a pointer frame.
+  const steps = curveSteps === undefined
+    ? Math.min(256, Math.max(24, Math.ceil(Math.sqrt(Math.hypot(...route.handle.offset) / 0.5))))
+    : Math.max(1, Math.floor(curveSteps))
   const out: LinePoint[] = []
-  for (let i = 0; i <= curveSteps; i++) {
-    const t = i / curveSteps
-    const mt = 1 - t
-    const p: LinePoint = [
-      mt * mt * route.start[0] + 2 * mt * t * route.control[0] + t * t * route.end[0],
-      mt * mt * route.start[1] + 2 * mt * t * route.control[1] + t * t * route.end[1],
-    ]
-    out.push(localToWorld(n, p))
+  for (let i = 0; i <= steps; i++) {
+    out.push(localToWorld(n, quadraticPoint(route.start, route.control, route.end, i / steps)))
   }
   return out
 }
@@ -217,7 +232,24 @@ export function sampleArrowRoute(n: ArrowNode, curveSteps = 24): LinePoint[] {
 export interface RouteBounds { x: number; y: number; w: number; h: number }
 
 export function arrowRouteBounds(n: ArrowNode): RouteBounds {
-  const points = sampleArrowRoute(n)
+  const route = localArrowRoute(n)
+  let local: LinePoint[]
+  if (route.kind === "polyline") {
+    local = route.points
+  } else {
+    // A quadratic can reach an axis extreme between any two samples. Solve
+    // those extrema exactly so viewport fitting and culling never shave off a
+    // bend just because its t value happened to fall between sample steps.
+    const ts = new Set([0, 1])
+    for (const axis of [0, 1] as const) {
+      const denominator = route.start[axis] - 2 * route.control[axis] + route.end[axis]
+      if (Math.abs(denominator) < EPS) continue
+      const t = (route.start[axis] - route.control[axis]) / denominator
+      if (t > 0 && t < 1) ts.add(t)
+    }
+    local = [...ts].map((t) => quadraticPoint(route.start, route.control, route.end, t))
+  }
+  const points = local.map((p) => localToWorld(n, p))
   let minX = Infinity
   let minY = Infinity
   let maxX = -Infinity
@@ -229,6 +261,11 @@ export function arrowRouteBounds(n: ArrowNode): RouteBounds {
     maxY = Math.max(maxY, y)
   }
   return { x: minX, y: minY, w: maxX - minX, h: maxY - minY }
+}
+
+/** The box occupied by what a node actually draws, including routed bends. */
+export function nodeVisualBounds(n: SquigNode): RouteBounds {
+  return n.type === "arrow" ? arrowRouteBounds(n) : { x: n.x, y: n.y, w: n.w, h: n.h }
 }
 
 /** Route handle and segment in world coordinates for the selection overlay. */

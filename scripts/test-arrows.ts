@@ -24,7 +24,7 @@ import {
   withTarget,
 } from "../lib/canvas/arrow-binding.ts"
 import { normalizeArrowAnchors, normalizeBind, type ArrowNode, type ShapeNode, type SquigNode } from "../lib/types.ts"
-import { arrowRouteBounds, localArrowRoute, sampleArrowRoute, worldRouteHandle } from "../lib/canvas/line-routing.ts"
+import { arrowRouteBounds, localArrowRoute, nodeVisualBounds, sampleArrowRoute, worldRouteHandle } from "../lib/canvas/line-routing.ts"
 
 let passed = 0
 const failures: string[] = []
@@ -120,6 +120,11 @@ function doc(list: SquigNode[]): Record<string, SquigNode> {
     "curve: a manual midpoint is read relative to the endpoints",
     bent.kind === "curve" && close(bent.handle.point[0], 62) && close(bent.handle.point[1], 30)
   )
+
+  const deep = arrow({ lineStyle: "curved", curveBend: [83, 1000] })
+  const deepBounds = arrowRouteBounds(deep)
+  check("curve: exact bounds include an extreme manual midpoint", close(deepBounds.y + deepBounds.h, 1000))
+  check("visual bounds: routed arrows use their visible path", nodeVisualBounds(deep).h > deep.h)
 }
 
 // -- the ray, against a rectangle -------------------------------------------

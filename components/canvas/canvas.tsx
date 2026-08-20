@@ -54,7 +54,7 @@ import { inViewBox, visibleBox } from "@/lib/canvas/cull"
 import { ContextRow } from "./context-row"
 import { EmptyCanvas } from "./empty-canvas"
 import { TextEditOverlay } from "./text-edit-overlay"
-import { arrowRouteBounds, worldRouteHandle, type RouteHandle } from "@/lib/canvas/line-routing"
+import { nodeVisualBounds, worldRouteHandle, type RouteHandle } from "@/lib/canvas/line-routing"
 
 /**
  * A gesture's zoom floor is not a constant: ⇧1 is allowed below MIN_ZOOM to
@@ -1223,7 +1223,7 @@ export function Canvas() {
       e.preventDefault()
       const s = st()
       const sel = s.selection.map((id) => s.nodes[id]).filter(Boolean) as SquigNode[]
-      const b = unionBounds(sel)
+      const b = unionBounds(sel.map(nodeVisualBounds))
       if (!b) return
 
       // the second press on the same handle, soon enough after the first
@@ -1888,9 +1888,8 @@ export function Canvas() {
             e.preventDefault()
             s.toggleTextStyle("underline")
             return
-          // ⇧⌘L is Figma's lock, and nothing here wanted it: plain L is the
-          // line tool and ⇧L the arrow, both without a modifier. It only
-          // locks — unlocking is the right button's job, because by then
+          // ⇧⌘L is Figma's lock, while plain L activates the Arrow tool. It
+          // only locks — unlocking is the right button's job, because by then
           // there is nothing selected to unlock.
           case "KeyL":
             if (!e.shiftKey) return
@@ -2167,6 +2166,7 @@ export function Canvas() {
   // that happened to be stacked above it shouldn't sit in the middle of it
   const cropNode = cropTarget(nodes, selection, croppingId)
   const hoverNode = hover && !selection.includes(hover.id) && !cropNode ? nodes[hover.id] : null
+  const hoverBounds = hoverNode ? nodeVisualBounds(hoverNode) : null
   const bindNode = bindHint ? nodes[bindHint.id] : null
   /**
    * The world worth drawing. Recomputed on every pan and zoom, which is
@@ -2247,7 +2247,7 @@ export function Canvas() {
             // off the glass, so no paths for it — except for the one being
             // edited, which the editor is standing over and whose runs the
             // renderer has to keep agreeing with
-            if (id !== editingId && !inViewBox(n.type === "arrow" ? arrowRouteBounds(n) : n, view)) return null
+            if (id !== editingId && !inViewBox(nodeVisualBounds(n), view)) return null
             return (
               <g key={id} transform={`translate(${n.x} ${n.y})`}>
                 <NodeSketch node={n} hiddenText={id === editingId ? editing?.hidden : undefined} />
@@ -2285,14 +2285,14 @@ export function Canvas() {
           of its feedback: enough to tell "held down" from "broken",
           gone the moment the pointer moves off, and never a badge that would
           print itself into a screenshot. */}
-      {hoverNode && !editingId && !gestureKind && (
+      {hoverNode && hoverBounds && !editingId && !gestureKind && (
         <div
           className="pointer-events-none absolute rounded-sm"
           style={{
-            left: hoverNode.x * v.zoom + v.x,
-            top: hoverNode.y * v.zoom + v.y,
-            width: hoverNode.w * v.zoom,
-            height: hoverNode.h * v.zoom,
+            left: hoverBounds.x * v.zoom + v.x,
+            top: hoverBounds.y * v.zoom + v.y,
+            width: hoverBounds.w * v.zoom,
+            height: hoverBounds.h * v.zoom,
             // dashes lay down less ink than a solid rule, so the locked one is
             // mixed stronger to land at the same weight on the page — the dash
             // is meant to be the difference, not the dimness
@@ -2784,7 +2784,8 @@ function SelectionOverlay({
   editing: boolean
   gestureKind: Gesture["kind"] | null
 }) {
-  const b = unionBounds(selectedNodes)
+  const visualBounds = selectedNodes.map(nodeVisualBounds)
+  const b = unionBounds(visualBounds)
   // the text editor draws its own dashed box; two boxes on one node is noise.
   // Only when it's the *selected* node being edited, mind: a picture dropped in
   // while the caret is still blinking somewhere else is selected and has every
@@ -2854,15 +2855,15 @@ function SelectionOverlay({
     <>
       {/* each member gets a hairline, so you can see exactly what's in the set */}
       {(multi || marqueeing) &&
-        selectedNodes.map((n) => (
+        selectedNodes.map((n, i) => (
           <div
             key={n.id}
             className="pointer-events-none absolute rounded-sm"
             style={{
-              left: n.x * v.zoom + v.x,
-              top: n.y * v.zoom + v.y,
-              width: n.w * v.zoom,
-              height: n.h * v.zoom,
+              left: visualBounds[i].x * v.zoom + v.x,
+              top: visualBounds[i].y * v.zoom + v.y,
+              width: visualBounds[i].w * v.zoom,
+              height: visualBounds[i].h * v.zoom,
               border: "1px solid color-mix(in srgb, var(--sq-select) 50%, transparent)",
             }}
           />

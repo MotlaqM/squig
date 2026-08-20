@@ -323,7 +323,7 @@ export interface Box {
   maxY: number
 }
 
-export function unionBox(nodes: SquigNode[]): Box | null {
+export function unionBox(nodes: readonly { x: number; y: number; w: number; h: number }[]): Box | null {
   if (!nodes.length) return null
   return {
     minX: Math.min(...nodes.map((n) => n.x)),

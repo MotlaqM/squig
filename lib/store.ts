@@ -6,6 +6,7 @@ import type { ComponentNode, ImageNode, SquigNode, TextAlign, TextNode, Tool, Vi
 import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { validNode } from "./clipboard-payload"
 import { remapBinds, settleBinds } from "./canvas/arrow-binding"
+import { nodeVisualBounds } from "./canvas/line-routing"
 import { cropTarget, isCropped, trueShapePatch, uncropPatch } from "./canvas/crop"
 import {
   clampGestureZoom,
@@ -499,7 +500,7 @@ function cloneNodes(list: SquigNode[], dx: number, dy: number): SquigNode[] {
  * arrival would be a greeting rather than an answer.
  */
 function fitBox(set: (partial: { viewport: Viewport }) => void, list: SquigNode[], cap = MAX_ZOOM): boolean {
-  const box = unionBox(list)
+  const box = unionBox(list.map(nodeVisualBounds))
   if (!box) return false
   const { viewport, clamped } = fitViewport(box, window.innerWidth, window.innerHeight, cap)
   set({ viewport })
@@ -1392,7 +1393,7 @@ export const useSquig = create<SquigState>((set, get) => ({
     const { selection, nodes } = get()
     const sel = selection.map((id) => nodes[id]).filter(Boolean) as SquigNode[]
     if (!sel.length) return
-    const box = unionBox(sel)
+    const box = unionBox(sel.map(nodeVisualBounds))
     if (!box) return
     const patches: Record<string, Partial<SquigNode>> = {}
     for (const n of sel) {
@@ -1462,7 +1463,7 @@ export const useSquig = create<SquigState>((set, get) => ({
 
   pasteNodes: (list, at) => {
     if (!list.length) return
-    const box = unionBox([...list])!
+    const box = unionBox([...list].map(nodeVisualBounds))!
     const [dx, dy] = at ? [at[0] - box.minX, at[1] - box.minY] : [16, 16]
     const clones = cloneNodes([...list], dx, dy)
     // same reason as duplicateSelected: what a paste leaves selected is part of
@@ -1519,7 +1520,7 @@ export const useSquig = create<SquigState>((set, get) => ({
    */
   revealSelection: () => {
     const { nodes, selection, viewport } = get()
-    const box = unionBox(selection.map((id) => nodes[id]).filter(Boolean))
+    const box = unionBox(selection.map((id) => nodes[id]).filter(Boolean).map(nodeVisualBounds))
     if (!box) return
     const move = revealViewport(viewport, box, window.innerWidth, window.innerHeight)
     if (move.kind === "hold") return

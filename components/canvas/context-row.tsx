@@ -22,7 +22,7 @@ import { TextAlignMenu, TextStyleToggles } from "@/components/chrome/text-contro
 import { Segmented, type SegmentOption } from "@/components/ui/segmented"
 import { Panel } from "@/components/ui/panel"
 import { LineStyleMenu } from "@/components/chrome/line-style-controls"
-import { arrowRouteBounds } from "@/lib/canvas/line-routing"
+import { nodeVisualBounds } from "@/lib/canvas/line-routing"
 
 /** Fill tones, as chips — the same four the inspector offers, drawn smaller. */
 const FILL_OPTIONS: readonly SegmentOption<FillTone>[] = (
@@ -85,7 +85,7 @@ export function ContextRow({
 
   // Curves and outside-routed elbows can extend past their endpoint box. The
   // toolbar belongs above the visible path, not on top of its highest bend.
-  const bounds = unionBounds(selectedNodes.map((n) => (n.type === "arrow" ? arrowRouteBounds(n) : n)))
+  const bounds = unionBounds(selectedNodes.map(nodeVisualBounds))
   if (!enabled || uiHidden || editingId || busy || !bounds) return null
 
   const boxLeft = bounds.x * viewport.zoom + viewport.x
