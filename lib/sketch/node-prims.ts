@@ -7,7 +7,7 @@
 // ---------------------------------------------------------------------------
 
 import { HAND, mirrorPrims, type Prim, type PrimOpts } from "./kit"
-import { textAnchorX, textBaseline, textBoxPadding, textContentWidth } from "./text-layout"
+import { textAnchorX, textBaseline, textBoxPadding, textContentWidth, textVerticalOffset } from "./text-layout"
 import { wrapText } from "@/lib/canvas/text-metrics"
 import { localArrowRoute, localRouteEndTangent } from "@/lib/canvas/line-routing"
 import {
@@ -131,10 +131,11 @@ export function basePrims(node: SquigNode): Prim[] {
       const lines = node.fixedW
         ? wrapText(node.text, measure, { size: node.fontSize, bold: node.bold, italic: node.italic })
         : node.text.split("\n")
+      const offsetY = textVerticalOffset(node.h, lines.length, node.fontSize, boxed, node.verticalAlign)
       const words = lines.map((lineText, i): Prim => ({
         t: "text",
         x: anchor,
-        y: textBaseline(i, node.fontSize, boxed),
+        y: offsetY + textBaseline(i, node.fontSize, boxed),
         text: lineText,
         size: node.fontSize,
         align: node.align,

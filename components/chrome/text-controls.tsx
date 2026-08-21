@@ -12,6 +12,9 @@
 import { useState } from "react"
 import { Popover } from "@base-ui/react/popover"
 import {
+  AlignBottomSimpleIcon,
+  AlignCenterVerticalSimpleIcon,
+  AlignTopSimpleIcon,
   TextAlignCenterIcon,
   TextAlignLeftIcon,
   TextAlignRightIcon,
@@ -22,7 +25,7 @@ import {
 } from "@phosphor-icons/react"
 
 import { useSquig } from "@/lib/store"
-import type { TextAlign, TextNode } from "@/lib/types"
+import type { TextAlign, TextNode, TextVerticalAlign } from "@/lib/types"
 import { shared, type Shared } from "@/lib/selection"
 import { kbd } from "@/lib/shortcuts"
 import { cn } from "@/lib/utils"
@@ -60,6 +63,21 @@ export const ALIGN_OPTIONS: readonly SegmentOption<TextAlign>[] = ALIGNMENTS.map
 /** What the whole selection agrees its alignment is — absent reads as left. */
 export function sharedAlign(texts: readonly TextNode[]): Shared<TextAlign> {
   return shared(texts.map((n) => n.align ?? "left"))
+}
+
+const VERTICAL_ALIGNMENTS: { value: TextVerticalAlign; label: string; icon: PhosphorIcon }[] = [
+  { value: "top", label: "Align top", icon: AlignTopSimpleIcon },
+  { value: "center", label: "Align middle", icon: AlignCenterVerticalSimpleIcon },
+  { value: "bottom", label: "Align bottom", icon: AlignBottomSimpleIcon },
+]
+
+export const VERTICAL_ALIGN_OPTIONS: readonly SegmentOption<TextVerticalAlign>[] = VERTICAL_ALIGNMENTS.map(
+  ({ value, label, icon: Icon }) => ({ value, label, content: <Icon className="size-4" /> })
+)
+
+/** What the whole selection agrees its vertical alignment is — absent is top. */
+export function sharedVerticalAlign(texts: readonly TextNode[]): Shared<TextVerticalAlign> {
+  return shared(texts.map((n) => n.verticalAlign ?? "top"))
 }
 
 // ---------------------------------------------------------------------------

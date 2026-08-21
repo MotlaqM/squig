@@ -2,7 +2,13 @@
 // Keeping a text node's box honest about what's in it.
 // ---------------------------------------------------------------------------
 
-import { anchorFactor, textBlockHeight, textBoxPadding, textContentWidth } from "@/lib/sketch/text-layout"
+import {
+  anchorFactor,
+  textBlockHeight,
+  textBoxPadding,
+  textContentWidth,
+  verticalAnchorFactor,
+} from "@/lib/sketch/text-layout"
 import { measureLinesWidth, wrapText } from "./text-metrics"
 import type { TextNode } from "@/lib/types"
 
@@ -11,15 +17,39 @@ const MIN_WIDTH = 24
 /** A hair past the last glyph, so the selection ring never clips an overhang. */
 const SLACK = 2
 
+/** The height the current words need, before any user-chosen extra room. */
+export function textNaturalHeight(
+  n: TextNode,
+  text = n.text,
+  fontSize = n.fontSize,
+  width = n.w
+): number {
+  const boxed = !!n.boxed
+  const lineCount = n.fixedW
+    ? wrapText(text, textContentWidth(width, fontSize, boxed), {
+        size: fontSize,
+        bold: n.bold,
+        italic: n.italic,
+      }).length
+    : (text || " ").split("\n").length
+  return textBlockHeight(lineCount, fontSize, boxed)
+}
+
+/** Explicit height is a floor, not permission to draw words outside the box. */
+function fitHeight(n: TextNode, natural: number): number {
+  return n.fixedH ? Math.max(n.h, natural) : natural
+}
+
 /**
  * Fit the box to the words.
  *
  * An auto-sized layer's box grows and shrinks around whichever edge the
  * alignment pins, so centred text stays centred where it was and right-aligned
  * text keeps its right edge instead of sliding off it. A fixed-width layer
- * holds its box still — the words wrap to it, and only the height answers to
- * the text. Vertically both always grow downward: the first baseline is the
- * one thing that never moves while you type.
+ * holds its width still and wraps the words to it. Height follows the text
+ * until someone has explicitly set it; that height then acts as a floor and
+ * vertical alignment places shorter content inside. Top-aligned text grows
+ * downward, keeping its first baseline still while you type.
  *
  * A mirrored node pins the opposite edge: flipping swaps which end of the box
  * the run hangs off (see mirrorPrims), so the anchor has to swap with it.
@@ -29,7 +59,8 @@ export function fitTextBox(n: TextNode, text: string, fontSize = n.fontSize): Pa
   const boxed = !!n.boxed
   if (n.fixedW) {
     const measure = textContentWidth(n.w, fontSize, boxed)
-    return { text, fontSize, h: textBlockHeight(wrapText(text, measure, style).length, fontSize, boxed) }
+    const natural = textBlockHeight(wrapText(text, measure, style).length, fontSize, boxed)
+    return { text, fontSize, h: fitHeight(n, natural) }
   }
   const lines = (text || " ").split("\n")
   const measured = measureLinesWidth(lines, style)
@@ -50,7 +81,7 @@ export function fitTextBox(n: TextNode, text: string, fontSize = n.fontSize): Pa
     fontSize,
     x: n.x + oldVisualAnchor - nextVisualAnchor,
     w,
-    h: textBlockHeight(lines.length, fontSize, boxed),
+    h: fitHeight(n, textBlockHeight(lines.length, fontSize, boxed)),
   }
 }
 
@@ -74,12 +105,38 @@ export function setTextWidth(n: TextNode, w: number): Partial<TextNode> {
   const boxed = !!n.boxed
   const measure = textContentWidth(cw, n.fontSize, boxed)
   const lines = wrapText(n.text, measure, { size: n.fontSize, bold: n.bold, italic: n.italic })
-  return { fixedW: true, w: cw, h: textBlockHeight(lines.length, n.fontSize, boxed) }
+  const natural = textBlockHeight(lines.length, n.fontSize, boxed)
+  return { fixedW: true, w: cw, h: fitHeight(n, natural) }
+}
+
+/** What a top or bottom handle does: only the outer box changes. */
+export function setTextHeight(n: TextNode, h: number): Partial<TextNode> {
+  return { fixedH: true, h: Math.max(h, textNaturalHeight(n)) }
+}
+
+/**
+ * A free corner owns both box axes but scales the font on one uniform scalar.
+ * Height drives the type size; width remains free to reflow the words.
+ */
+export function setTextBoxSize(n: TextNode, w: number, h: number, fontSize: number): Partial<TextNode> {
+  const sized = { ...n, fontSize, fixedW: true, fixedH: true }
+  const cw = Math.max(minTextWidth(sized), w)
+  const natural = textNaturalHeight({ ...sized, w: cw }, n.text, fontSize, cw)
+  return { fixedW: true, fixedH: true, fontSize, w: cw, h: Math.max(h, natural) }
 }
 
 /** Back to hugging the words — what double-clicking a side handle means. */
 export function autoSizeTextBox(n: TextNode): Partial<TextNode> {
   return { ...fitTextBox({ ...n, fixedW: false }, n.text), fixedW: false }
+}
+
+/** Collapse only the extra vertical room, keeping the drawn words in place. */
+export function autoSizeTextHeight(n: TextNode): Partial<TextNode> {
+  const h = textNaturalHeight(n)
+  const extra = Math.max(0, n.h - h)
+  const logical = verticalAnchorFactor(n.verticalAlign)
+  const visual = n.flipY ? 1 - logical : logical
+  return { fixedH: false, y: n.y + extra * visual, h }
 }
 
 /**

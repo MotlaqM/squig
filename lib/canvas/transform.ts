@@ -10,6 +10,7 @@ import type { SquigNode } from "../types"
 import type { Bounds } from "../selection"
 import { textBlockHeight, textContentWidth } from "../sketch/text-layout"
 import { wrapText } from "./text-metrics"
+import { textNaturalHeight } from "./text-reflow"
 
 export const HANDLES = ["nw", "n", "ne", "e", "se", "s", "sw", "w"] as const
 export type Handle = (typeof HANDLES)[number]
@@ -214,9 +215,15 @@ export function scaleNodes(
       // come apart — see lib/sketch/text-layout
       const fontSize = Math.max(4, n.fontSize * sy)
       patch.fontSize = fontSize
+      const scaled = { ...n, w: n.w * sx, h: n.h * sy, fontSize }
+      if (n.fixedH) {
+        // A manually chosen height scales with the selection, but content is
+        // still never allowed to spill outside it after an off-ratio reflow.
+        patch.h = Math.max(scaled.h, textNaturalHeight(scaled))
+      }
       // a fixed-width layer scaled off-ratio re-breaks its lines, so the box
       // height has to come from the new wrap, not from the old height scaled
-      if (n.fixedW && Math.abs(sx - sy) > EPS) {
+      if (!n.fixedH && n.fixedW && Math.abs(sx - sy) > EPS) {
         const boxed = !!n.boxed
         const measure = textContentWidth(n.w * sx, fontSize, boxed)
         const lines = wrapText(n.text, measure, { size: fontSize, bold: n.bold, italic: n.italic })

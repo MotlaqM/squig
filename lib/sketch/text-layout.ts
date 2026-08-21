@@ -6,7 +6,7 @@
 // So they live here, and nowhere else.
 // ---------------------------------------------------------------------------
 
-import type { TextAlign } from "@/lib/types"
+import type { TextAlign, TextVerticalAlign } from "@/lib/types"
 
 /** Line spacing, as a multiple of the type size. */
 export const TEXT_LINE_HEIGHT = 1.35
@@ -48,6 +48,26 @@ export function textBaseline(line: number, fontSize: number, boxed = false): num
 export function textBlockHeight(lineCount: number, fontSize: number, boxed = false): number {
   const text = fontSize * (TEXT_FIRST_BASELINE + Math.max(0, lineCount - 1) * TEXT_LINE_HEIGHT + DESCENDER)
   return text + textBoxPadding(fontSize, boxed).y * 2
+}
+
+/** Which part of spare vertical room sits above the words. */
+export function verticalAnchorFactor(align: TextVerticalAlign | undefined): number {
+  return align === "center" ? 0.5 : align === "bottom" ? 1 : 0
+}
+
+/**
+ * How far the natural text block moves down inside a taller outer box.
+ * Negative room is treated as none: reflow grows the box before rendering,
+ * and imported documents should not push their words farther out of bounds.
+ */
+export function textVerticalOffset(
+  boxHeight: number,
+  lineCount: number,
+  fontSize: number,
+  boxed = false,
+  align?: TextVerticalAlign
+): number {
+  return Math.max(0, boxHeight - textBlockHeight(lineCount, fontSize, boxed)) * verticalAnchorFactor(align)
 }
 
 /**

@@ -194,6 +194,10 @@ function aimAt(node: ComponentNode, text: string, nth = 0): string | null {
   } as TextNode
   is("a text layer ignores the aim entirely", editTarget(text as SquigNode, "label")!.value, "hello")
   is("…and is always editable", hasEditableText(text as SquigNode), true)
+
+  const tall = { ...text, h: 100, fixedH: true, verticalAlign: "bottom" as const }
+  const drawn = nodePrims(tall).find((p): p is TextPrim => p.t === "text")!
+  is("a vertically aligned text editor opens on the drawn baseline", editTarget(tall)!.baseline, drawn.y)
 }
 
 // -- nothing regressed across the library ------------------------------------

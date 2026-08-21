@@ -33,7 +33,13 @@ import {
   type ArrowTarget,
 } from "@/lib/canvas/arrow-binding"
 import { clampWindow, cropAnchor, cropPatch, cropTarget, imageSheet, panSheet } from "@/lib/canvas/crop"
-import { autoSizeTextBox, setTextWidth } from "@/lib/canvas/text-reflow"
+import {
+  autoSizeTextBox,
+  autoSizeTextHeight,
+  setTextBoxSize,
+  setTextHeight,
+  setTextWidth,
+} from "@/lib/canvas/text-reflow"
 import { computeSnap, computeResizeSnap, makeSnapRect, type GuideLine, type SnapRect } from "@/lib/canvas/snap-engine"
 import { pinchViewport, type PinchStart, type Pt } from "@/lib/canvas/pinch"
 import { useSpacebarPan } from "@/lib/canvas/use-spacebar-pan"
@@ -719,12 +725,11 @@ export function Canvas() {
         const dx = wx - g.wx
         const dy = wy - g.wy
 
-        // one text layer alone resizes like a text layer, not like a box: the
-        // side handles set the measure the words wrap to, and the corners
-        // scale the type — always in proportion, because a corner-stretched
-        // glyph isn't a thing a pen does
+        // One text layer alone resizes like a text container. Side handles own
+        // one box axis without touching the font. Corners own both axes; Shift
+        // locks the box ratio, while the glyphs themselves always keep theirs.
         const soloText = g.origNodes.length === 1 && g.origNodes[0].type === "text" ? (g.origNodes[0] as TextNode) : null
-        const lockAspect = mods.shift || (!!soloText && g.handle.length === 2)
+        const lockAspect = mods.shift && (!soloText || g.handle.length === 2)
 
         const raw = resizeBounds(g.origBounds, g.handle, dx, dy, { aspect: lockAspect, fromCenter: mods.alt })
         let next = raw
@@ -756,6 +761,43 @@ export function Canvas() {
               ? next.x + next.w - w
               : next.x
           s.updateNodes({ [soloText.id]: { ...patch, x } as Partial<SquigNode> })
+          return
+        }
+
+        if (soloText && (g.handle === "n" || g.handle === "s")) {
+          // Height drag. Like the width branch above, a content clamp may make
+          // the final box larger than the pointer's raw box, so re-anchor it on
+          // the edge the gesture promised would stay put.
+          const patch = setTextHeight(soloText, next.h)
+          const h = patch.h as number
+          const y = mods.alt
+            ? next.y + next.h / 2 - h / 2
+            : g.handle === "n"
+              ? next.y + next.h - h
+              : next.y
+          s.updateNodes({ [soloText.id]: { ...patch, y } as Partial<SquigNode> })
+          return
+        }
+
+        if (soloText && g.handle.length === 2 && !lockAspect) {
+          // A free corner uses vertical movement as the one scalar for type;
+          // width is independent and reflows the words. That keeps every glyph
+          // proportional without secretly locking the outer box.
+          const sy = g.origBounds.h > 1e-6 ? next.h / g.origBounds.h : 1
+          const patch = setTextBoxSize(soloText, next.w, next.h, Math.max(4, soloText.fontSize * sy))
+          const w = patch.w as number
+          const h = patch.h as number
+          const x = mods.alt
+            ? next.x + next.w / 2 - w / 2
+            : g.handle.includes("w")
+              ? next.x + next.w - w
+              : next.x
+          const y = mods.alt
+            ? next.y + next.h / 2 - h / 2
+            : g.handle.includes("n")
+              ? next.y + next.h - h
+              : next.y
+          s.updateNodes({ [soloText.id]: { ...patch, x, y } as Partial<SquigNode> })
           return
         }
 
@@ -1217,6 +1259,15 @@ export function Canvas() {
     s.updateNode(n.id, autoSizeTextBox(n) as Partial<SquigNode>)
   }, [st])
 
+  /** Double-clicking a vertical side brings the box back to its content. */
+  const resetTextHeight = useCallback(() => {
+    const s = st()
+    const n = s.selection.length === 1 ? s.nodes[s.selection[0]] : null
+    if (!n || n.type !== "text" || !n.fixedH) return
+    s.checkpoint()
+    s.updateNode(n.id, autoSizeTextHeight(n) as Partial<SquigNode>)
+  }, [st])
+
   const startResize = useCallback(
     (handle: Handle, e: React.PointerEvent) => {
       e.stopPropagation()
@@ -1236,6 +1287,13 @@ export function Canvas() {
       if (doubled && (handle === "e" || handle === "w") && lone?.type === "text" && lone.fixedW) {
         swallowDblClickUntil.current = e.timeStamp + 600
         resetTextWidth()
+        return
+      }
+      // The same reset on the other axis: collapse the extra room without
+      // moving the words, taking vertical alignment and flips into account.
+      if (doubled && (handle === "n" || handle === "s") && lone?.type === "text" && lone.fixedH) {
+        swallowDblClickUntil.current = e.timeStamp + 600
+        resetTextHeight()
         return
       }
 
@@ -1271,7 +1329,7 @@ export function Canvas() {
         e
       )
     },
-    [st, beginGesture, toWorld, resetTextWidth]
+    [st, beginGesture, toWorld, resetTextWidth, resetTextHeight]
   )
 
   /**
@@ -2836,13 +2894,12 @@ function SelectionOverlay({
   const showWide = w >= HANDLE_ROOM
   const showTall = h >= HANDLE_ROOM
 
-  // a lone text layer has no top or bottom to drag: its height is derived from
-  // the wrapped lines, so the handles that would set it are corners (scale the
-  // type) and sides (set the measure) — same six tldraw offers
+  // Text exposes all four container edges. Narrow or short selections still
+  // hide the midpoint that would collide with their corner handles.
   const soloText = selectedNodes.length === 1 && selectedNodes[0].type === "text"
 
   const visible = (hd: Handle) => {
-    if (hd === "n" || hd === "s") return !soloText && showWide
+    if (hd === "n" || hd === "s") return showWide
     if (hd === "e" || hd === "w") return soloText || showTall
     return true
   }

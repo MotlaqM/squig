@@ -178,7 +178,9 @@ function standing(): void {
       h: 40,
       seed: 5,
       align: "center",
+      verticalAlign: "bottom",
       fixedW: true,
+      fixedH: true,
       bold: true,
       link: "https://example.com",
       boxed: true,
@@ -208,7 +210,15 @@ function standing(): void {
 
   const words = st().nodes.words
   check("a label keeps its words", words?.type === "text" && words.text === "hello\nnapkin")
-  check("…its measure, its alignment and its link", words?.type === "text" && words.fixedW === true && words.align === "center" && !!words.link)
+  check(
+    "…its measure, its alignment and its link",
+    words?.type === "text" &&
+      words.fixedW === true &&
+      words.fixedH === true &&
+      words.align === "center" &&
+      words.verticalAlign === "bottom" &&
+      !!words.link
+  )
   check(
     "…and its inseparable box treatment",
     words?.type === "text" &&

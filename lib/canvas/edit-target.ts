@@ -22,7 +22,7 @@
 import { INK, type Prim } from "@/lib/sketch/kit"
 import { measureTextWidth, wrapText } from "@/lib/canvas/text-metrics"
 import { nodePrims } from "@/lib/sketch/node-prims"
-import { anchorFactor, textAnchorX, textBaseline, textBoxPadding, textContentWidth } from "@/lib/sketch/text-layout"
+import { anchorFactor, textAnchorX, textBaseline, textBoxPadding, textContentWidth, textVerticalOffset } from "@/lib/sketch/text-layout"
 import { getDef } from "@/lib/library/registry"
 import { normalizeInk } from "@/lib/types"
 import type { ComponentNode, SquigNode, TextAlign, TextNode } from "@/lib/types"
@@ -229,14 +229,15 @@ function textNodeTarget(node: TextNode): EditTarget {
   const lines = node.fixedW
     ? wrapText(node.text, measure, { size: node.fontSize, bold: node.bold, italic: node.italic })
     : node.text.split("\n")
+  const offsetY = textVerticalOffset(node.h, lines.length, node.fontSize, boxed, node.verticalAlign)
   const align: TextAlign = node.align ?? "left"
   const flipped: TextAlign = node.flipX ? (align === "left" ? "right" : align === "right" ? "left" : "center") : align
 
   const anchor = pad.x + textAnchorX(align, measure)
   const x = node.flipX ? node.w - anchor : anchor
   const top = node.flipY
-    ? node.h - textBaseline(Math.max(0, lines.length - 1), node.fontSize, boxed) + node.fontSize * 0.6
-    : textBaseline(0, node.fontSize, boxed)
+    ? node.h - offsetY - textBaseline(Math.max(0, lines.length - 1), node.fontSize, boxed) + node.fontSize * 0.6
+    : offsetY + textBaseline(0, node.fontSize, boxed)
 
   return {
     value: node.text,

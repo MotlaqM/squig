@@ -2,7 +2,7 @@
 
 import { create } from "zustand"
 import { nanoid } from "nanoid"
-import type { ComponentNode, ImageNode, SquigNode, TextAlign, TextNode, Tool, Viewport, ShapeKind } from "./types"
+import type { ComponentNode, ImageNode, SquigNode, TextAlign, TextNode, TextVerticalAlign, Tool, Viewport, ShapeKind } from "./types"
 import { normalizeFill, screenToWorld, unionBox } from "./types"
 import { validNode } from "./clipboard-payload"
 import { remapBinds, settleBinds } from "./canvas/arrow-binding"
@@ -218,6 +218,7 @@ interface SquigState {
   flipSelected: (axis: "x" | "y") => void
   toggleTextStyle: (style: "bold" | "italic" | "underline") => void
   setTextAlign: (align: TextAlign) => void
+  setTextVerticalAlign: (align: TextVerticalAlign) => void
   setLinkOnSelection: (url: string) => void
 
   copySelected: () => void
@@ -1424,6 +1425,19 @@ export const useSquig = create<SquigState>((set, get) => ({
     if (texts.every((n) => (n.align ?? "left") === align)) return
     get().checkpoint()
     get().updateNodes(Object.fromEntries(texts.map((n) => [n.id, { align } as Partial<SquigNode>])))
+  },
+
+  setTextVerticalAlign: (align) => {
+    const { selection, nodes } = get()
+    const texts = selection.map((id) => nodes[id]).filter((n) => n?.type === "text") as TextNode[]
+    if (!texts.length) return
+    if (texts.every((n) => (n.verticalAlign ?? "top") === align)) return
+    get().checkpoint()
+    get().updateNodes(
+      Object.fromEntries(
+        texts.map((n) => [n.id, { verticalAlign: align === "top" ? undefined : align } as Partial<SquigNode>])
+      )
+    )
   },
 
   setLinkOnSelection: (url) => {

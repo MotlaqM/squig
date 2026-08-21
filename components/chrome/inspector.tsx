@@ -21,11 +21,17 @@ import { isCropped, trueShapePatch } from "@/lib/canvas/crop"
 import { getDef } from "@/lib/library/registry"
 import { lockedIds, selectionSummary, shared, sharedControls, sharedNumber, unionBounds } from "@/lib/selection"
 import { scaleNodes, MIN_SIZE } from "@/lib/canvas/transform"
-import { fitTextBox, setTextBoxed, setTextWidth } from "@/lib/canvas/text-reflow"
+import { fitTextBox, setTextBoxed, setTextBoxSize, setTextHeight, setTextWidth } from "@/lib/canvas/text-reflow"
 import { VariantControl } from "./variant-controls"
 import { MixedNumberField, MixedSwitch, MixedTextField } from "./mixed-fields"
 import { AlignRow } from "./align-row"
-import { ALIGN_OPTIONS, TextStyleToggles, sharedAlign } from "./text-controls"
+import {
+  ALIGN_OPTIONS,
+  TextStyleToggles,
+  VERTICAL_ALIGN_OPTIONS,
+  sharedAlign,
+  sharedVerticalAlign,
+} from "./text-controls"
 import { Panel, PanelFooter, PanelHeader, PanelNote, PanelSection, Row, StackRow } from "@/components/ui/panel"
 import { IconAction, Segmented, type SegmentOption } from "@/components/ui/segmented"
 import { Switch } from "@/components/ui/switch"
@@ -458,6 +464,15 @@ function SelectionEditor({ selected }: { selected: SquigNode[] }) {
             />
           </Row>
 
+          <Row label="Vertical">
+            <Segmented
+              ariaLabel="Vertical text alignment"
+              options={VERTICAL_ALIGN_OPTIONS}
+              shared={sharedVerticalAlign(texts)}
+              onChange={(align) => st().setTextVerticalAlign(align)}
+            />
+          </Row>
+
           <Row label="Style">
             <TextStyleToggles texts={texts} />
           </Row>
@@ -803,10 +818,13 @@ function isOutlined(n: SquigNode): boolean {
  * subtly different ones.
  */
 function resizeTo(n: SquigNode, w: number, h: number): Partial<SquigNode> {
-  // typing a width into a text layer sets the measure its words wrap to — the
-  // same thing dragging a side handle does — rather than stretching the box
-  // around the type
-  if (n.type === "text" && w !== n.w) return setTextWidth(n, w) as Partial<SquigNode>
+  // Text dimensions edit the container, just like its four side handles. The
+  // font only changes from a corner transform or the Size field.
+  if (n.type === "text") {
+    if (w !== n.w && h !== n.h) return setTextBoxSize(n, w, h, n.fontSize) as Partial<SquigNode>
+    if (w !== n.w) return setTextWidth(n, w) as Partial<SquigNode>
+    if (h !== n.h) return setTextHeight(n, h) as Partial<SquigNode>
+  }
   const from = unionBounds([n])!
   return scaleNodes([n], from, { x: n.x, y: n.y, w, h })[n.id]
 }

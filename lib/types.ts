@@ -120,6 +120,9 @@ export interface DrawNode extends BaseNode, Outlined {
  */
 export type TextAlign = "left" | "center" | "right"
 
+/** Top when absent, so older documents keep their words where they were. */
+export type TextVerticalAlign = "top" | "center" | "bottom"
+
 export interface TextNode extends BaseNode {
   type: "text"
   text: string
@@ -127,13 +130,24 @@ export interface TextNode extends BaseNode {
   /**
    * A text layer starts life auto-sized: the box hugs the words, a line ends
    * where you pressed Return. Dragging a side handle sets this — from then on
-   * `w` is the measure the words wrap to and `h` follows the wrapped line
-   * count. Corner handles scale the type either way. Double-clicking a side
-   * handle clears it. Absent on every document written before this existed.
+   * `w` is the measure the words wrap to. Height follows the wrapped line
+   * count until a top or bottom handle gives it extra room. Corner handles
+   * scale the type either way. Double-clicking a horizontal side handle clears
+   * it. Absent on every document written before this existed.
    */
   fixedW?: boolean
   /** left when absent — most text is */
   align?: TextAlign
+  /**
+   * A manually sized text box can have room below or around its words. Top is
+   * the quiet default: adding height never makes an existing run jump.
+   */
+  verticalAlign?: TextVerticalAlign
+  /**
+   * The box has a user-set minimum height. Content may grow it to avoid
+   * clipping, but deleting words does not throw the chosen height away.
+   */
+  fixedH?: boolean
   /** the tone the words print in — full ink when absent */
   ink?: InkTone
   bold?: boolean

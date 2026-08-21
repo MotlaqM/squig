@@ -9,8 +9,18 @@
 // ---------------------------------------------------------------------------
 
 import { wrapText, measureTextWidth } from "../lib/canvas/text-metrics.ts"
-import { fitTextBox, setTextWidth, autoSizeTextBox, minTextWidth, setTextBoxed } from "../lib/canvas/text-reflow.ts"
-import { textBlockHeight, textBoxPadding, textContentWidth } from "../lib/sketch/text-layout.ts"
+import {
+  fitTextBox,
+  setTextWidth,
+  autoSizeTextBox,
+  minTextWidth,
+  setTextBoxed,
+  setTextHeight,
+  autoSizeTextHeight,
+  setTextBoxSize,
+  textNaturalHeight,
+} from "../lib/canvas/text-reflow.ts"
+import { textBaseline, textBlockHeight, textBoxPadding, textContentWidth } from "../lib/sketch/text-layout.ts"
 import { nodePrims } from "../lib/sketch/node-prims.ts"
 import { scaleNodes } from "../lib/canvas/transform.ts"
 import { unionBox, type TextNode } from "../lib/types.ts"
@@ -161,6 +171,49 @@ check("empty text still has a line", wrapText("", 100, STYLE).length === 1)
   )
 }
 
+// -- explicit height + vertical alignment ---------------------------------
+
+{
+  const natural = textBlockHeight(1, 10)
+  const top = text({ fixedH: true, h: 100 })
+  const middle = text({ fixedH: true, h: 100, verticalAlign: "center" })
+  const bottom = text({ fixedH: true, h: 100, verticalAlign: "bottom" })
+  const topRun = nodePrims(top).find((p) => p.t === "text")!
+  const middleRun = nodePrims(middle).find((p) => p.t === "text")!
+  const bottomRun = nodePrims(bottom).find((p) => p.t === "text")!
+
+  check("absent vertical alignment reads as top", close(topRun.y, textBaseline(0, 10)))
+  check("middle alignment splits the spare height", close(middleRun.y - topRun.y, (100 - natural) / 2))
+  check("bottom alignment puts all spare height above", close(bottomRun.y - topRun.y, 100 - natural))
+}
+
+{
+  const n = text({ fixedW: true, fixedH: true, w: 100, h: 80, verticalAlign: "center" })
+  const fit = fitTextBox(n, "short")
+  const width = setTextWidth(n, 120)
+  check("editing keeps a manually chosen height", close(fit.h!, 80))
+  check("changing width keeps a manually chosen height", close(width.h!, 80))
+
+  const reset = autoSizeTextHeight(n)
+  const natural = textNaturalHeight(n)
+  check("double-clicking a vertical edge clears the fixed height", reset.fixedH === false && close(reset.h!, natural))
+  check("height reset leaves centred words in place", close(reset.y!, n.y + (n.h - natural) / 2))
+}
+
+{
+  const n = text({ fixedW: true, w: 30, h: textBlockHeight(2, 10) })
+  const short = setTextHeight(n, 1)
+  const tall = setTextHeight(n, 90)
+  check("a vertical edge cannot squeeze through its words", close(short.h!, textNaturalHeight(n)))
+  check("a vertical edge can add room without changing type", tall.fixedH === true && tall.h === 90)
+
+  const corner = setTextBoxSize(n, 120, 80, 20)
+  check(
+    "a free corner fixes both box axes and uses one font scalar",
+    corner.fixedW === true && corner.fixedH === true && corner.w === 120 && corner.h === 80 && corner.fontSize === 20
+  )
+}
+
 // -- setTextWidth / autoSizeTextBox ----------------------------------------
 
 {
@@ -200,6 +253,13 @@ check("empty text still has a line", wrapText("", 100, STYLE).length === 1)
   const patch = scaleNodes([n], from, { x: 0, y: 0, w: 60, h: n.h * 2 })[n.id] as Partial<TextNode>
   check("uniform scale doubles the type", close(patch.fontSize!, 20))
   check("uniform scale keeps two lines", close(patch.h!, textBlockHeight(2, 20)), String(patch.h))
+}
+
+{
+  const n = text({ fixedW: true, fixedH: true, w: 100, h: 80 })
+  const from = { x: 0, y: 0, w: n.w, h: n.h }
+  const patch = scaleNodes([n], from, { x: 0, y: 0, w: 200, h: 120 })[n.id] as Partial<TextNode>
+  check("selection scaling preserves explicit text height", close(patch.h!, 120))
 }
 
 {
