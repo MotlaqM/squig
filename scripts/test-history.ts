@@ -55,6 +55,7 @@ function reset() {
     nodes: {},
     order: [],
     selection: [],
+    selectionGroupId: null,
     clipboard: [],
     past: [],
     future: [],

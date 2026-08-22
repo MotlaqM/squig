@@ -60,9 +60,9 @@ Figma's, so your hands already know it. `?` opens the full list in the app.
 | `⌘Z` / `⇧⌘Z` | undo / redo |
 | `⌘D`, `⌥`-drag | duplicate |
 | `⌘C` `⌘X` `⌘V` / `⇧⌘V` | copy, cut, paste at cursor / paste in place |
-| `⌘G` / `⇧⌘G` | group / ungroup — and ungroup detaches an instance |
+| `⌘G` / `⇧⌘G` | group / ungroup — groups can nest; ungroup detaches an instance |
 | `⌥⌘B` | detach instance |
-| `⌘`-click, double-click | reach inside a group |
+| `⌘`-click, double-click | deep-select / step one level into a group |
 | `⌘]` / `⌘[` | bring forward / send backward |
 | `⌥⌘]` / `⌥⌘[` (or `]` / `[`) | bring to front / send to back |
 | `⇧H` / `⇧V` | flip horizontal / vertical |
@@ -89,9 +89,10 @@ worth running before you push.
 
 ## How it's put together
 
-Documents are a flat map of nodes on an infinite plane — no nesting, no flow
-layout. A node is a component instance, a shape, a freehand stroke, text, or
-an arrow.
+Documents are a flat map of nodes on an infinite plane. Groups—including
+subgroups—are hierarchy paths stamped onto those nodes rather than container
+nodes, so there is still no layout nesting or flow layout. A node is a
+component instance, a shape, a freehand stroke, text, or an arrow.
 
 Components never render to DOM. Each one is a `ComponentDef` whose `render()`
 returns an array of drawing primitives (`rect`, `line`, `text`, `icon`, …),

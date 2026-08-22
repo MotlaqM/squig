@@ -94,6 +94,7 @@ function pic(src: string): ImageNode {
   check("nor a shape that isn't one", validNode({ ...rect("a"), shape: "hexagon" }) === null)
   check("nor a text node with no words", validNode({ ...label("a", "hi"), text: 42 }) === null)
   check("nor group ids that aren't strings", validNode({ ...rect("a"), groupIds: [1, 2] }) === null)
+  check("empty and repeated group ids are normalized", validNode({ ...rect("a"), groupIds: ["", "g", "g"] })?.groupIds?.join() === "g")
   check("a negative size is clamped, not refused", validNode({ ...rect("a"), w: -5 })?.w === 0)
   check("a node with no seed still gets one", typeof validNode({ ...rect("a"), seed: undefined })?.seed === "number")
 
