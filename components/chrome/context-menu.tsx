@@ -12,6 +12,7 @@ import { hasEditableText } from "@/lib/canvas/edit-target"
 import { isCropped } from "@/lib/canvas/crop"
 import { kbd } from "@/lib/shortcuts"
 import { copyAsPngWithNotice } from "@/lib/export-image"
+import { canGroupSelection } from "@/lib/canvas/groups"
 import {
   AlignBottomSimpleIcon,
   AlignCenterHorizontalSimpleIcon,
@@ -113,6 +114,7 @@ export function CanvasContextMenu() {
   const hasComponent = targets.some((id) => nodes[id]?.type === "component")
   const hasText = targets.some((id) => nodes[id]?.type === "text")
   const hasGroup = targets.some((id) => nodes[id]?.groupIds?.length)
+  const canGroup = canGroupSelection(targets, nodes, order)
   // A locked layer can't be selected, so the only way one reaches this menu is
   // by being right-clicked on its own — which makes "all of them" and "the one
   // under the pointer" the same set, and the menu a single question.
@@ -136,7 +138,7 @@ export function CanvasContextMenu() {
       { label: "Duplicate", hint: kbd("mod+d"), icon: CopyIcon, run: () => st().duplicateSelected() },
       { label: "Copy", hint: kbd("mod+c"), icon: CopySimpleIcon, run: copySelection },
       { label: "Copy as PNG", hint: kbd("mod+shift+c"), icon: ImageIcon, run: copyAsPngWithNotice },
-      ...(targets.length > 1
+      ...(canGroup
         ? [{ label: "Group", hint: kbd("mod+g"), icon: BoundingBoxIcon, run: () => st().groupSelected() } as Entry]
         : []),
       ...(hasGroup

@@ -137,7 +137,7 @@ function standing(): void {
 {
   const doc = {
     box: rect("box", { locked: true, ink: "muted", stroke: "heavy", dashed: true, groupIds: ["g1"] }),
-    other: rect("other", { x: 300 }),
+    other: rect("other", { x: 300, groupIds: ["g1"] }),
     line: {
       id: "line",
       type: "arrow",

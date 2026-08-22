@@ -57,6 +57,7 @@ import { exportDoc } from "@/lib/file-io"
 import { copyAsPngWithNotice } from "@/lib/export-image"
 import { clampGestureZoom, zoomFloor, MAX_ZOOM, MIN_ZOOM } from "@/lib/canvas/navigate"
 import { inViewBox, visibleBox } from "@/lib/canvas/cull"
+import { groupPickForHit, stepIntoGroup, type GroupPick } from "@/lib/canvas/groups"
 import { ContextRow } from "./context-row"
 import { EmptyCanvas } from "./empty-canvas"
 import { TextEditOverlay } from "./text-edit-overlay"
@@ -142,6 +143,8 @@ type Gesture =
       exceeded: boolean
       /** the nodes the gesture started on, in document order */
       sourceIds: string[]
+      /** the nested group those leaves represent, when they are one group */
+      sourceGroupId: string | null
       /** positions at gesture start, keyed by source id */
       sourcePos: Record<string, { x: number; y: number }>
       /** ids of the alt-drag copies, while alt is held */
@@ -152,7 +155,7 @@ type Gesture =
        *  drag narrows to exactly this set. Carries the set rather than the id
        *  because ⌘-click means "just this piece" while a plain click means
        *  "this piece's whole group". */
-      collapseTo: string[] | null
+      collapseTo: GroupPick | null
     }
   | {
       kind: "marquee"
@@ -163,6 +166,7 @@ type Gesture =
       pointerId: number
       exceeded: boolean
       base: string[]
+      baseGroupId: string | null
       /** the hollow shape whose middle the press landed in, if any. A press
        *  there reads two ways — a click means "select this shape", a drag
        *  means "marquee, it just happened to start inside" — so the candidate
@@ -594,14 +598,14 @@ export function Canvas() {
 
         // alt engages and disengages drag-a-copy, live, mid-gesture
         if (mods.alt && !g.cloneIds) {
-          st().setSelection(g.sourceIds)
+          st().setSelection(g.sourceIds, g.sourceGroupId)
           // put the sources back first so the copies land exactly on them
           st().updateNodes(Object.fromEntries(g.sourceIds.map((id) => [id, { ...g.sourcePos[id] }])))
           const ids = st().cloneSelectionInPlace()
           if (ids.length === g.sourceIds.length) g.cloneIds = ids
         } else if (!mods.alt && g.cloneIds) {
           st().removeNodes(g.cloneIds, { checkpoint: false })
-          st().setSelection(g.sourceIds)
+          st().setSelection(g.sourceIds, g.sourceGroupId)
           g.cloneIds = null
         }
 
@@ -1099,7 +1103,7 @@ export function Canvas() {
     // a click with no drag inside a bigger selection narrows to what was
     // clicked — already resolved to a group or a single piece at press time
     if (g.kind === "move" && !g.exceeded && g.collapseTo) {
-      s.setSelection(g.collapseTo)
+      s.setSelection(g.collapseTo.ids, g.collapseTo.groupId)
     }
 
     // the press sat inside a hollow shape and never became a drag: it was a
@@ -1108,7 +1112,10 @@ export function Canvas() {
     if (g.kind === "marquee" && !g.exceeded && g.softHitId && s.nodes[g.softHitId]) {
       const mods = modsRef.current
       const deep = mods.toggle && !!s.nodes[g.softHitId]?.groupIds?.length
-      const hitSet = deep ? [g.softHitId] : s.expandSelection([g.softHitId])
+      const picked = deep
+        ? { ids: [g.softHitId], groupId: null }
+        : groupPickForHit(g.softHitId, s.selection, s.selectionGroupId, s.nodes, s.order)
+      const hitSet = picked.ids
       if (!deep && (mods.shift || mods.toggle)) {
         const sel = s.selection
         s.setSelection(
@@ -1117,7 +1124,7 @@ export function Canvas() {
             : [...new Set([...sel, ...hitSet])]
         )
       } else {
-        s.setSelection(hitSet)
+        s.setSelection(hitSet, picked.groupId)
       }
     }
 
@@ -1141,7 +1148,7 @@ export function Canvas() {
     stopAutoPan()
 
     if (g.kind === "marquee") {
-      s.setSelection(g.base)
+      s.setSelection(g.base, g.baseGroupId)
     } else if ((g.kind === "move" || g.kind === "resize" || g.kind === "crop" || g.kind === "endpoint" || g.kind === "route") && g.dirty) {
       // Escape undoes this drag, not the whole crop — you stay in the mode
       s.revertToCheckpoint()
@@ -1627,10 +1634,14 @@ export function Canvas() {
         // falls back to toggling — which is what a Ctrl+click is everywhere
         // that isn't a design tool.
         const deep = mods.toggle && grouped
-        const hitSet = deep ? [hitId] : s.expandSelection([hitId])
+        const picked = deep
+          ? { ids: [hitId], groupId: null }
+          : groupPickForHit(hitId, s.selection, s.selectionGroupId, s.nodes, s.order)
+        const hitSet = picked.ids
         const additive = !deep && (mods.shift || mods.toggle)
         let sel = s.selection
-        let collapseTo: string[] | null = null
+        let sourceGroupId = s.selectionGroupId
+        let collapseTo: GroupPick | null = null
 
         if (additive) {
           if (hitSet.every((id) => sel.includes(id))) {
@@ -1640,13 +1651,18 @@ export function Canvas() {
           }
           sel = [...new Set([...sel, ...hitSet])]
           s.setSelection(sel)
+          sourceGroupId = null
         } else if (!hitSet.every((id) => sel.includes(id))) {
           sel = hitSet
-          s.setSelection(sel)
+          s.setSelection(sel, picked.groupId)
+          sourceGroupId = picked.groupId
+        } else if (sel.length === hitSet.length && sourceGroupId !== picked.groupId) {
+          s.setSelection(sel, picked.groupId)
+          sourceGroupId = picked.groupId
         } else if (sel.length > hitSet.length) {
           // already part of a bigger selection: hold the set together so it
           // can be dragged, and only narrow down if this turns out to be a click
-          collapseTo = hitSet
+          collapseTo = picked
         }
 
         const sourcePos: Record<string, { x: number; y: number }> = {}
@@ -1661,7 +1677,18 @@ export function Canvas() {
           }
         }
         if (!sourceIds.length) return
-        beginGesture({ kind: "move", ...common, wx, wy, sourceIds, sourcePos, cloneIds: null, dirty: false, collapseTo }, e)
+        beginGesture({
+          kind: "move",
+          ...common,
+          wx,
+          wy,
+          sourceIds,
+          sourceGroupId,
+          sourcePos,
+          cloneIds: null,
+          dirty: false,
+          collapseTo,
+        }, e)
         return
       }
 
@@ -1669,7 +1696,15 @@ export function Canvas() {
       // base. If the press sits inside a hollow shape, that shape rides along
       // as the thing a mere click would mean.
       const softHitId = pickSoftAt(s.nodes, s.order, wx, wy)
-      beginGesture({ kind: "marquee", ...common, wx, wy, base: s.selection, softHitId }, e)
+      beginGesture({
+        kind: "marquee",
+        ...common,
+        wx,
+        wy,
+        base: s.selection,
+        baseGroupId: s.selectionGroupId,
+        softHitId,
+      }, e)
     },
     [st, tool, isSpacebarHeld, toWorld, beginGesture, dropComponent]
   )
@@ -1706,9 +1741,12 @@ export function Canvas() {
       }
       const n = s.nodes[hitId]
       if (!n) return
-      // first double-click steps into a group; the next one edits what's inside
-      if (n.groupIds?.length && !(s.selection.length === 1 && s.selection[0] === hitId)) {
-        s.setSelection([hitId])
+      // Each double-click crosses one group boundary. Keeping the exact active
+      // group in store is what makes G/A/B reachable as G, then A, then B,
+      // rather than jumping from the outside straight to the leaf.
+      if (n.groupIds?.length && (s.selectionGroupId || s.selection.length !== 1 || s.selection[0] !== hitId)) {
+        const next = stepIntoGroup(hitId, s.selection, s.selectionGroupId, s.nodes, s.order)
+        s.setSelection(next.ids, next.groupId)
         return
       }
       // double-clicking inside a multi-selection narrows to what you clicked
@@ -1762,7 +1800,10 @@ export function Canvas() {
       // right-clicking outside the current selection re-targets it — but a
       // locked layer is never selected, so the menu targets it directly and
       // whatever was selected before is left alone
-      if (hitId && !locked && !s.selection.includes(hitId)) s.setSelection(s.expandSelection([hitId]))
+      if (hitId && !locked && !s.selection.includes(hitId)) {
+        const picked = groupPickForHit(hitId, s.selection, s.selectionGroupId, s.nodes, s.order)
+        s.setSelection(picked.ids, picked.groupId)
+      }
       if (!hitId) s.setSelection([])
       s.setContextMenu({ x: e.clientX, y: e.clientY, nodeId: hitId })
     },

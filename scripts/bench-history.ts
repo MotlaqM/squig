@@ -48,7 +48,7 @@ function fakeSrc(chars: number, salt: string): string {
 const IMAGES = Number(process.argv[2] ?? 6)
 const SRC_CHARS = Number(process.argv[3] ?? 300_000)
 
-useSquig.setState({ nodes: {}, order: [], selection: [], past: [], future: [] })
+useSquig.setState({ nodes: {}, order: [], selection: [], selectionGroupId: null, past: [], future: [] })
 for (let i = 0; i < IMAGES; i++) {
   s().addNode(
     {

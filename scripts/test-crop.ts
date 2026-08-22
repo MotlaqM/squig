@@ -543,6 +543,7 @@ function cropping(): string {
     nodes: {},
     order: [],
     selection: [],
+    selectionGroupId: null,
     clipboard: [],
     past: [],
     future: [],

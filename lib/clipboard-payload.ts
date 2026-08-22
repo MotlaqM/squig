@@ -17,6 +17,7 @@
 
 import type { SquigNode, TextNode } from "./types"
 import { normalizeArrowAnchors, normalizeBind, normalizeCrop, normalizeLineStyle } from "./types"
+import { normalizeGroupIds } from "./canvas/groups"
 
 const PAYLOAD_VERSION = 1
 /** the attribute the HTML carrier hides the payload in */
@@ -115,6 +116,7 @@ export function validNode(v: unknown): SquigNode | null {
   if (!str(n.type) || !NODE_TYPES.has(n.type)) return null
   if (!num(n.x) || !num(n.y) || !num(n.w) || !num(n.h)) return null
   if (n.groupIds !== undefined && !(Array.isArray(n.groupIds) && n.groupIds.every(str))) return null
+  n.groupIds = normalizeGroupIds(n.groupIds)
 
   switch (n.type) {
     case "component":

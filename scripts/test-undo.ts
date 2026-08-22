@@ -56,6 +56,7 @@ function reset() {
     nodes: {},
     order: [],
     selection: [],
+    selectionGroupId: null,
     past: [],
     future: [],
     dupTrail: null,

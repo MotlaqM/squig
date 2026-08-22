@@ -22,6 +22,7 @@ import { relativeTime } from "@/lib/files"
 import { kbd } from "@/lib/shortcuts"
 import { isCropped } from "@/lib/canvas/crop"
 import { lockedIds } from "@/lib/selection"
+import { canGroupSelection } from "@/lib/canvas/groups"
 import {
   ArrowCounterClockwiseIcon,
   CropIcon,
@@ -146,6 +147,7 @@ function Palette() {
     return n?.type === "image" && isCropped(n)
   })
   const lockedCount = lockedIds(nodes, order).length
+  const canGroup = canGroupSelection(selection, nodes, order)
 
   const actions = useMemo<Action[]>(
     () => [
@@ -164,7 +166,7 @@ function Palette() {
       { id: "cut", label: "Cut", hint: kbd("mod+x"), section: "Edit", icon: ScissorsIcon, disabled: !hasSel, run: cutSelection },
       { id: "paste", label: "Paste", hint: kbd("mod+v"), section: "Edit", keywords: "image picture screenshot", icon: ClipboardIcon, run: () => void pasteFromSystem() },
       { id: "del", label: "Delete", hint: kbd("del"), section: "Edit", icon: TrashIcon, disabled: !hasSel, run: () => st().deleteSelected() },
-      { id: "group", label: "Group", hint: kbd("mod+g"), section: "Edit", keywords: "combine bundle", icon: BoundingBoxIcon, disabled: selection.length < 2, run: () => st().groupSelected() },
+      { id: "group", label: "Group", hint: kbd("mod+g"), section: "Edit", keywords: "combine bundle", icon: BoundingBoxIcon, disabled: !canGroup, run: () => st().groupSelected() },
       { id: "ungroup", label: "Ungroup", hint: kbd("mod+shift+g"), section: "Edit", keywords: "split apart", icon: LinkBreakIcon, disabled: !hasGroup, run: () => st().ungroupSelected() },
       {
         id: "break", label: "Detach instance", hint: kbd("alt+mod+b"), section: "Edit",
@@ -231,7 +233,7 @@ function Palette() {
           run: () => st().openFile(f.id),
         })),
     ],
-    [st, hasSel, hasComponent, hasText, hasGroup, loneImage, hasCrop, lockedCount, selection.length, files, docId]
+    [st, hasSel, hasComponent, hasText, hasGroup, loneImage, hasCrop, lockedCount, canGroup, selection.length, files, docId]
   )
 
   const rows = useMemo<Row[]>(() => {
