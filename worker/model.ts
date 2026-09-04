@@ -39,9 +39,9 @@ function lastUserText(messages: readonly ModelMessage[]): string {
 }
 
 function fakeReply(messages: readonly ModelMessage[]): ModelReply {
-  const prompt = lastUserText(messages).toLowerCase()
+  const prompt = lastUserText(messages).trim().toLowerCase()
   const toolResults = messages.filter((message) => message.role === "tool").length
-  if (prompt.includes("landing")) {
+  if (prompt === "build a landing page with nav, hero, three feature cards, pricing, footer") {
     if (toolResults === 0) {
       return { content: "", toolCalls: [{ id: "fake-catalogue", type: "function", function: { name: "list_components", arguments: JSON.stringify({ category: "blocks" }) } }] }
     }
@@ -64,7 +64,7 @@ function fakeReply(messages: readonly ModelMessage[]): ModelReply {
     }
     return { content: "Built a seven-node landing page with a nav, hero, three features, pricing, and footer.", toolCalls: [] }
   }
-  if (prompt.includes("button") && toolResults === 0) {
+  if (prompt === "insert a button at 100,100" && toolResults === 0) {
     return { content: "", toolCalls: [{ id: "fake-button", type: "function", function: { name: "insert_component", arguments: JSON.stringify({ kind: "button", x: 100, y: 100 }) } }] }
   }
   if (toolResults > 0) return { content: "Added the requested button at 100, 100.", toolCalls: [] }

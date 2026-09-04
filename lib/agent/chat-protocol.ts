@@ -41,6 +41,10 @@ export interface ChatCompletedFrame {
   model?: string
   affected: string[]
 }
+
+export function isUndoableAgentCompletion(frame: ChatCompletedFrame): boolean {
+  return (frame.status === "completed" || frame.status === "accepted") && frame.affected.length > 0
+}
 export interface SelectionSetFrame { type: "selection.set"; turnId: string; rev: number; ids: string[] }
 export interface ChatErrorFrame {
   type: "chat.error"

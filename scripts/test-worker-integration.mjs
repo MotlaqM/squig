@@ -8,6 +8,8 @@ const project = resolve(import.meta.dirname, "..")
 const persistDir = resolve(project, ".wrangler/state/phase4-integration")
 const port = 8789
 const origin = `http://127.0.0.1:${port}`
+const BUTTON_PROMPT = "insert a button at 100,100"
+const LANDING_PROMPT = "build a landing page with nav, hero, three feature cards, pricing, footer"
 let worker = null
 let fatal = null
 
@@ -271,15 +273,16 @@ async function run() {
 
   const [chatA, chatB] = await openPair("phase4-button", "chat")
   const chatBCursor = chatB.messages.length
-  const button = await startChat(chatA, { type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  const button = await startChat(chatA, { type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
   assert(button.completed.status === "completed" && button.completed.rev === 1, "fake button turn did not commit exactly one revision")
   await waitConverged([chatA, chatB], 1)
-  const buttonNode = chatA.doc.order.map((id) => chatA.doc.nodes[id]).find((node) => node.type === "component" && node.kind === "button")
-  assert(buttonNode?.x === 100 && buttonNode?.y === 100, "fake model did not insert button at 100,100")
+  const buttonNodes = chatA.doc.order.map((id) => chatA.doc.nodes[id]).filter((node) => node.type === "component" && node.kind === "button")
+  const buttonNode = buttonNodes[0]
+  assert(chatA.doc.order.length === 1 && buttonNodes.length === 1 && buttonNode?.x === 100 && buttonNode?.y === 100, "fake model did not insert exactly one total button at 100,100")
   assert(chatA.messages.slice(button.cursor).some((message) => message.type === "selection.set" && message.ids.includes(buttonNode.id)), "requester did not receive agent selection")
   assert(!chatB.messages.slice(chatBCursor).some((message) => message.type === "selection.set"), "non-requester received selection.set")
   const chatDuplicateCursor = chatA.messages.length
-  chatA.send({ type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  chatA.send({ type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
   await chatA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "button-turn", chatDuplicateCursor)
   assert(chatA.core.inspect().serverRev === 1, "idempotent turn replay created another revision")
   const undoCursor = chatA.messages.length
@@ -290,18 +293,38 @@ async function run() {
 
   const [reviewA, reviewB] = await openPair("phase4-review-accept", "review")
   const reviewCursor = reviewA.messages.length
-  reviewA.send({ type: "chat.start", turnId: "review-accept", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  const reviewBCursor = reviewB.messages.length
+  reviewA.send({ type: "chat.start", turnId: "review-accept", clientRev: 0, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
   const pending = await reviewA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-accept", reviewCursor, 5000)
   assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0 && pending.ops.length === 1, "pending review changed the serialized document")
-  const acceptCursor = reviewA.messages.length
-  reviewA.send({ type: "review.accept", turnId: "review-accept", clientRev: 0 })
-  await reviewA.waitForMessage((message) => message.type === "chat.completed" && message.status === "accepted", acceptCursor)
-  await waitConverged([reviewA, reviewB], 1)
-  assert(reviewA.doc.order.length === 1, "accepted review did not commit")
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  assert(!reviewB.messages.slice(reviewBCursor).some((message) => message.type === "review.pending"), "non-requester received review.pending")
+  for (const type of ["review.accept", "review.reject"]) {
+    const unauthorizedCursor = reviewB.messages.length
+    reviewB.send({ type, turnId: "review-accept", clientRev: 0 })
+    await reviewB.waitForMessage((message) => message.type === "chat.error" && message.turnId === "review-accept" && message.code === "not_found", unauthorizedCursor)
+    assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0, `non-requester ${type} changed pending review state`)
+  }
+  await Promise.all([reviewA.close(), reviewB.close()])
+  await stopWorker()
+  await startWorker()
+  const [reviewReloadA, reviewReloadB] = await openPair("phase4-review-accept", "review")
+  const recovered = await reviewReloadA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-accept", 0, 5000)
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  assert(recovered.baseRev === 0 && recovered.ops.length === 1, "owning tab did not recover pending review after restart")
+  assert(!reviewReloadB.messages.some((message) => message.type === "review.pending"), "other client recovered someone else's pending review")
+  const acceptCursor = reviewReloadA.messages.length
+  const acceptedBCursor = reviewReloadB.messages.length
+  reviewReloadA.send({ type: "review.accept", turnId: "review-accept", clientRev: 0 })
+  await reviewReloadA.waitForMessage((message) => message.type === "chat.completed" && message.status === "accepted", acceptCursor)
+  await waitConverged([reviewReloadA, reviewReloadB], 1)
+  assert(reviewReloadA.doc.order.length === 1, "accepted review did not commit")
+  assert(reviewReloadA.messages.slice(acceptCursor).some((message) => message.type === "selection.set" && message.ids.length === 1), "review owner did not receive accepted selection")
+  assert(!reviewReloadB.messages.slice(acceptedBCursor).some((message) => message.type === "selection.set"), "non-requester received accepted review selection")
 
   const [rejectA, rejectB] = await openPair("phase4-review-reject", "reject")
   const rejectedPendingCursor = rejectA.messages.length
-  rejectA.send({ type: "chat.start", turnId: "review-reject", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  rejectA.send({ type: "chat.start", turnId: "review-reject", clientRev: 0, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
   await rejectA.waitForMessage((message) => message.type === "review.pending", rejectedPendingCursor, 5000)
   const rejectCursor = rejectA.messages.length
   rejectA.send({ type: "review.reject", turnId: "review-reject", clientRev: 0 })
@@ -310,7 +333,7 @@ async function run() {
 
   const [staleA, staleB] = await openPair("phase4-review-stale", "stale")
   const stalePendingCursor = staleA.messages.length
-  staleA.send({ type: "chat.start", turnId: "review-stale", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  staleA.send({ type: "chat.start", turnId: "review-stale", clientRev: 0, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
   await staleA.waitForMessage((message) => message.type === "review.pending", stalePendingCursor, 5000)
   staleB.core.localOperations([{ t: "add", node: shape("human-change", 0) }])
   await waitConverged([staleA, staleB], 1)
@@ -320,7 +343,7 @@ async function run() {
   assert(staleA.doc.order.join(",") === "human-change", "stale review modified the document")
 
   const [conflictA, conflictB] = await openPair("phase4-undo-conflict", "conflict")
-  await startChat(conflictA, { type: "chat.start", turnId: "contested-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  await startChat(conflictA, { type: "chat.start", turnId: "contested-turn", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
   await waitConverged([conflictA, conflictB], 1)
   conflictB.core.localOperations([{ t: "add", node: shape("after-agent", 0) }])
   await waitConverged([conflictA, conflictB], 2)
@@ -329,15 +352,23 @@ async function run() {
   await conflictA.waitForMessage((message) => message.type === "chat.error" && message.code === "undo_conflict", conflictCursor)
   assert(conflictA.core.inspect().serverRev === 2 && conflictA.doc.order.length === 2, "contested undo changed the document")
 
+  const [noOpA, noOpB] = await openPair("phase4-no-op", "noop")
+  const noOp = await startChat(noOpA, { type: "chat.start", turnId: "noop-turn", clientRev: 0, prompt: "describe the empty canvas", review: false, model: "default", selection: [] })
+  assert(noOp.completed.rev === 0 && noOp.completed.affected.length === 0 && noOpA.doc.order.length === 0 && noOpB.doc.order.length === 0, "completed no-op turn became undoable document work")
+
   const [landingA, landingB] = await openPair("phase4-landing", "landing")
-  const landing = await startChat(landingA, { type: "chat.start", turnId: "landing-turn", clientRev: 0, prompt: "Build a landing page", review: false, model: "default", selection: [] })
+  const landingBCursor = landingB.messages.length
+  const landing = await startChat(landingA, { type: "chat.start", turnId: "landing-turn", clientRev: 0, prompt: LANDING_PROMPT, review: false, model: "default", selection: [] })
   assert(landing.completed.rev === 1, "multi-round landing turn used more than one revision")
   await waitConverged([landingA, landingB], 1)
   const kinds = landingA.doc.order.map((id) => landingA.doc.nodes[id]).filter((node) => node.type === "component").map((node) => node.kind)
   assert(kinds.length === 7 && kinds.filter((kind) => kind === "navbar").length === 1 && kinds.filter((kind) => kind === "hero").length === 1 && kinds.filter((kind) => kind === "card").length === 3 && kinds.filter((kind) => kind === "pricing-block").length === 1 && kinds.filter((kind) => kind === "footer").length === 1, `landing fixture was not the exact seven semantic nodes: ${kinds.join(",")}`)
   assert(landingA.messages.slice(landing.cursor).filter((message) => message.type === "chat.tool").map((message) => message.name).join(",") === "list_components,batch", "landing fixture did not use the deterministic multi-round tool sequence")
+  const landingSelection = landingA.messages.slice(landing.cursor).find((message) => message.type === "selection.set")
+  assert(landingSelection?.ids.length === 7 && landingA.doc.order.every((id) => landingSelection.ids.includes(id)), "landing requester selection did not contain all seven affected nodes")
+  assert(!landingB.messages.slice(landingBCursor).some((message) => message.type === "selection.set"), "landing non-requester received selection.set")
 
-  await Promise.all([chatA.close(), chatB.close(), reviewA.close(), reviewB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), conflictA.close(), conflictB.close(), landingA.close(), landingB.close()])
+  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
 
   assert(!fatal, fatal?.message ?? "protocol failure")
   console.log(JSON.stringify({
@@ -353,8 +384,9 @@ async function run() {
     security: "both loopback origins/preflights allowed locally; foreign docs and agent origins rejected",
     wranglerRestart: "state and D1 persisted",
     fakeButton: "one revision at 100,100; requester-only selection",
-    review: "pending doc unchanged; accept, reject, and stale refusal passed",
+    review: "pending doc unchanged; owner-only recovery/control/selection, accept, reject, and stale refusal passed",
     agentUndo: "exact restore passed; contested undo refused",
+    noOp: "zero revision and no affected nodes",
     landingFixture: "nav, hero, three features, pricing, footer in one multi-round revision",
   }, null, 2))
 }

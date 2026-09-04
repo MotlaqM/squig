@@ -2,8 +2,10 @@ import { Agent, type Connection, type ConnectionContext, type WSMessage } from "
 import { nanoid } from "nanoid"
 import { z } from "zod"
 import { CHAT_MODELS, type ChatCompletedFrame, type ChatErrorFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
+import { boundedToolResultMessage } from "../lib/agent/model-context-budget"
 import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
-import { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_DEFINITIONS } from "../lib/agent/server-tools"
+import { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_DEFINITIONS, type ServerToolDraft } from "../lib/agent/server-tools"
+import { assertAgentStateBudget } from "../lib/agent/state-budget"
 import { validDocument } from "../lib/agent/validate"
 import { seedFromId } from "../lib/ops/context"
 import { applyOps } from "../lib/ops/invert"
@@ -27,6 +29,7 @@ interface AgentTurnRecord {
 
 interface PendingReview {
   turnId: string
+  clientId: string
   baseRev: number
   model: SquigModel
   ops: Op[]
@@ -113,6 +116,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unknown error"
 }
 
+function finalRequesterSelection(draft: ServerToolDraft): string[] {
+  const wanted = new Set([...draft.affected, ...draft.selection])
+  return draft.doc.order.filter((nodeId) => wanted.has(nodeId) && !draft.doc.nodes[nodeId].locked)
+}
+
 class ToolExecutionError extends Error {}
 
 export class SquigDoc extends Agent<Env, SquigDocState> {
@@ -125,7 +133,12 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
       this.setState(emptyState())
       return
     }
-    if (!Array.isArray(this.state.agentTurns)) this.setState({ ...this.state, agentTurns: [] })
+    const turns = Array.isArray(this.state.agentTurns) ? this.state.agentTurns : []
+    const pending = this.state.pendingReview as (PendingReview & { clientId?: unknown }) | undefined
+    const pendingReview = pending && typeof pending.clientId === "string" && pending.clientId ? pending : undefined
+    if (turns !== this.state.agentTurns || pendingReview !== pending) {
+      this.setState({ ...this.state, agentTurns: turns, pendingReview })
+    }
   }
 
   shouldSendProtocolMessages() { return false }
@@ -138,6 +151,9 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     }
     connection.setState({ clientId } satisfies SquigConnectionState)
     this.sendSnapshot(connection, clientId)
+    if (this.state.pendingReview?.clientId === clientId) {
+      connection.send(JSON.stringify(this.pendingFrame(this.state.pendingReview)))
+    }
   }
 
   async onMessage(connection: Connection, message: WSMessage) {
@@ -192,17 +208,20 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     try { doc = applyOps(doc, command.ops as Op[], REDUCER_CONTEXT) } catch { this.sendSnapshot(connection, clientId, "invalid"); return }
     if (!validDocument(doc)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     const rev = state.rev + 1
-    this.setState({
+    const next: SquigDocState = {
       ...state, nodes: doc.nodes, order: doc.order, rev,
       clientHeads: boundClientHeads({ ...state.clientHeads, [clientId]: { seq: command.clientSeq, rev } }),
-    })
+    }
+    if (!this.persistState(next)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     this.broadcast(JSON.stringify({ type: "op", ops: command.ops, rev, by: clientId, clientSeq: command.clientSeq }))
   }
 
   private async handleChatStart(connection: Connection, command: z.infer<typeof chatStartSchema>) {
+    const clientId = this.connectionClientId(connection)
     const existing = this.state.agentTurns.find((turn) => turn.turnId === command.turnId)
     if (existing) { this.sendCompleted(connection, existing); return }
     if (this.state.pendingReview?.turnId === command.turnId) {
+      if (this.state.pendingReview.clientId !== clientId) { this.sendError(connection, "not_found", "Pending review not found", command.turnId); return }
       connection.send(JSON.stringify(this.pendingFrame(this.state.pendingReview)))
       return
     }
@@ -237,9 +256,10 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
               allocateId: (doc) => { let next = nanoid(8); while (doc.nodes[next]) next = nanoid(8); return next },
               environment: { viewport: command.viewport, viewportWidth: command.viewportWidth, viewportHeight: command.viewportHeight },
             })
+            const toolMessage = boundedToolResultMessage(messages, call.id, executed.outcome)
             draft = executed.draft
             connection.send(JSON.stringify({ type: "chat.tool", turnId: command.turnId, name: call.function.name, summary: executed.outcome.summary, affected: executed.outcome.affected }))
-            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(executed.outcome) })
+            messages.push(toolMessage)
           } catch (error) {
             throw new ToolExecutionError(`${call.function.name}: ${errorMessage(error)}`)
           }
@@ -248,20 +268,24 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
       }
       if (this.state.rev !== baseRev) { this.sendError(connection, "stale_revision", "The canvas changed while the turn was running; nothing was committed", command.turnId); return }
       const message = answer || (draft.ops.length ? "Prepared the requested canvas changes." : "No canvas changes were needed.")
+      const selection = finalRequesterSelection(draft)
       if (command.review && draft.ops.length) {
         const pending: PendingReview = {
-          turnId: command.turnId, baseRev, model, ops: draft.ops, inverseOps: compactInverseOps(draft.inverseOps),
-          affected: draft.affected, selection: draft.selection, message,
+          turnId: command.turnId, clientId, baseRev, model, ops: draft.ops, inverseOps: compactInverseOps(draft.inverseOps),
+          affected: draft.affected, selection, message,
         }
-        this.setState({ ...this.state, pendingReview: pending })
-        this.broadcast(JSON.stringify(this.pendingFrame(pending)))
+        if (!this.persistState({ ...this.state, pendingReview: pending })) {
+          this.sendError(connection, "tool_error", "The prepared review is too large to persist safely", command.turnId)
+          return
+        }
+        connection.send(JSON.stringify(this.pendingFrame(pending)))
         connection.send(JSON.stringify({ type: "chat.completed", turnId: command.turnId, rev: baseRev, status: "pending", model, affected: pending.affected } satisfies ChatCompletedFrame))
         return
       }
       this.commitAgentTurn(connection, {
         turnId: command.turnId, baseRev, committedRev: baseRev + (draft.ops.length ? 1 : 0), status: "committed",
         completion: "completed", model, inverseOps: compactInverseOps(draft.inverseOps), affected: draft.affected,
-      }, draft.doc, draft.ops, draft.selection)
+      }, draft.doc, draft.ops, selection)
     } catch (error) {
       this.sendError(connection, error instanceof ToolExecutionError ? "tool_error" : "model_error", errorMessage(error), command.turnId)
     } finally {
@@ -274,9 +298,15 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     if (existing) { this.sendCompleted(connection, existing); return }
     const pending = this.state.pendingReview
     if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (pending.clientId !== this.connectionClientId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
     if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
     if (pending.baseRev !== this.state.rev) { this.sendError(connection, "stale_review", "The canvas changed after this review was prepared", turnId); return }
-    const doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, pending.ops, REDUCER_CONTEXT)
+    let doc: Doc
+    try { doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, pending.ops, REDUCER_CONTEXT) } catch {
+      this.sendError(connection, "tool_error", "Pending review operations are invalid", turnId)
+      return
+    }
+    if (!validDocument(doc)) { this.sendError(connection, "tool_error", "Pending review produced an invalid document", turnId); return }
     this.commitAgentTurn(connection, {
       turnId, baseRev: pending.baseRev, committedRev: this.state.rev + 1, status: "committed", completion: "accepted",
       model: pending.model, inverseOps: pending.inverseOps, affected: pending.affected,
@@ -288,12 +318,16 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     if (existing) { this.sendCompleted(connection, existing); return }
     const pending = this.state.pendingReview
     if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (pending.clientId !== this.connectionClientId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
     if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
     const record: AgentTurnRecord = {
       turnId, baseRev: pending.baseRev, committedRev: this.state.rev, status: "rejected", completion: "rejected",
       model: pending.model, inverseOps: [], affected: pending.affected,
     }
-    this.setState({ ...this.state, pendingReview: undefined, agentTurns: boundedTurns([...this.state.agentTurns, record]) })
+    if (!this.persistState({ ...this.state, pendingReview: undefined, agentTurns: boundedTurns([...this.state.agentTurns, record]) })) {
+      this.sendError(connection, "tool_error", "The rejected review could not be persisted safely", turnId)
+      return
+    }
     this.broadcast(JSON.stringify(this.completedFrame(record)))
   }
 
@@ -304,12 +338,20 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     if (!turn || turn.status === "rejected") { this.sendError(connection, "not_found", "Committed agent turn not found", turnId); return }
     if (turn.status === "undone") { this.sendCompleted(connection, turn); return }
     if (this.state.rev !== turn.committedRev || !turn.inverseOps.length) { this.sendError(connection, "undo_conflict", "The canvas changed after this agent turn", turnId); return }
-    const doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, turn.inverseOps, REDUCER_CONTEXT)
+    let doc: Doc
+    try { doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, turn.inverseOps, REDUCER_CONTEXT) } catch {
+      this.sendError(connection, "tool_error", "Agent undo operations are invalid", turnId)
+      return
+    }
+    if (!validDocument(doc)) { this.sendError(connection, "tool_error", "Agent undo produced an invalid document", turnId); return }
     const rev = this.state.rev + 1
-    const undone: AgentTurnRecord = { ...turn, status: "undone", completion: "undone", committedRev: rev }
+    const undone: AgentTurnRecord = { ...turn, status: "undone", completion: "undone", committedRev: rev, inverseOps: [] }
     const turns = [...this.state.agentTurns]
     turns[index] = undone
-    this.setState({ ...this.state, nodes: doc.nodes, order: doc.order, rev, agentTurns: turns })
+    if (!this.persistState({ ...this.state, nodes: doc.nodes, order: doc.order, rev, agentTurns: turns })) {
+      this.sendError(connection, "tool_error", "Agent undo is too large to persist safely", turnId)
+      return
+    }
     this.broadcast(JSON.stringify({ type: "op", ops: turn.inverseOps, rev, by: `agent:${turnId}`, clientSeq: 0 }))
     connection.send(JSON.stringify({ type: "selection.set", turnId, rev, ids: [] }))
     this.broadcast(JSON.stringify(this.completedFrame(undone)))
@@ -318,10 +360,12 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
   private commitAgentTurn(connection: Connection, record: AgentTurnRecord, doc: Doc, ops: Op[], selection: string[], accepted = false) {
     const state = this.state
     const rev = record.committedRev
-    this.setState({
+    if (!validDocument(doc)) { this.sendError(connection, "tool_error", "Agent turn produced an invalid document", record.turnId); return }
+    const next: SquigDocState = {
       ...state, nodes: doc.nodes, order: doc.order, rev, pendingReview: undefined,
       agentTurns: boundedTurns([...state.agentTurns, record]),
-    })
+    }
+    if (!this.persistState(next)) { this.sendError(connection, "tool_error", "Agent turn is too large to persist safely", record.turnId); return }
     if (ops.length) this.broadcast(JSON.stringify({ type: "op", ops, rev, by: `agent:${record.turnId}`, clientSeq: 0 }))
     connection.send(JSON.stringify({ type: "selection.set", turnId: record.turnId, rev, ids: selection }))
     const completed = this.completedFrame(record)
@@ -341,6 +385,12 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
 
   private sendError(connection: Connection, code: ChatErrorFrame["code"], message: string, turnId: string) {
     connection.send(JSON.stringify({ type: "chat.error", turnId, rev: this.state.rev, code, message } satisfies ChatErrorFrame))
+  }
+
+  private persistState(next: SquigDocState): boolean {
+    try { assertAgentStateBudget(next) } catch { return false }
+    this.setState(next)
+    return true
   }
 
   private connectionClientId(connection: Connection): string {

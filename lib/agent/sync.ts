@@ -502,9 +502,25 @@ export class SquigSyncCore {
   }
 }
 
-/** A new JavaScript page realm gets a new id; reconnects reuse the captured value. */
+/** Allocate an id for a genuinely new page/tab identity. */
 export function createPageClientId(): string { return crypto.randomUUID() }
-const PAGE_CLIENT_ID = createPageClientId()
+export const PAGE_CLIENT_ID_STORAGE_KEY = "squig:sync:page-client-id:v1"
+
+/** Keep one tab's id across reloads so it can reclaim owner-only review state. */
+export function loadPageClientId(storage?: Pick<Storage, "getItem" | "setItem">): string {
+  if (!storage) return createPageClientId()
+  try {
+    const existing = storage.getItem(PAGE_CLIENT_ID_STORAGE_KEY)
+    if (existing && /^[A-Za-z0-9._:-]{1,128}$/.test(existing)) return existing
+    const created = createPageClientId()
+    storage.setItem(PAGE_CLIENT_ID_STORAGE_KEY, created)
+    return created
+  } catch {
+    return createPageClientId()
+  }
+}
+
+const PAGE_CLIENT_ID = loadPageClientId(typeof sessionStorage === "undefined" ? undefined : sessionStorage)
 
 function configuredWorkerUrl(): string | null {
   const configured = process.env.NEXT_PUBLIC_SQUIG_WORKER_URL?.trim()

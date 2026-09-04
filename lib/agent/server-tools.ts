@@ -166,7 +166,7 @@ const REDUCER_CONTEXT: OpContext = {
 export function createServerToolDraft(doc: Doc, selection: readonly string[] = []): ServerToolDraft {
   return {
     doc,
-    selection: selection.filter((nodeId) => !!doc.nodes[nodeId] && !doc.nodes[nodeId].locked),
+    selection: selection.filter((nodeId) => !!doc.nodes[nodeId]),
     ops: [],
     inverseOps: [],
     affected: [],

@@ -8,7 +8,7 @@ import type { Doc, OpContext } from "../ops/types"
 import { useSquig } from "../store"
 
 interface EventEntry { seq: number; frame: ServerChatFrame }
-interface ChatSnapshot { connected: boolean; rev: number; events: EventEntry[] }
+export interface ChatSnapshot { connected: boolean; rev: number; resetEpoch: number; events: EventEntry[] }
 export interface ReviewPreview { turnId: string; baseRev: number; doc: Doc; affected: string[] }
 
 const CONTEXT: OpContext = {
@@ -17,7 +17,7 @@ const CONTEXT: OpContext = {
   seed: seedFromId,
 }
 
-let snapshot: ChatSnapshot = { connected: false, rev: 0, events: [] }
+let snapshot: ChatSnapshot = { connected: false, rev: 0, resetEpoch: 0, events: [] }
 let preview: ReviewPreview | null = null
 let sequence = 0
 let transport: ((frame: ClientChatFrame) => void) | null = null
@@ -42,12 +42,16 @@ export function setChatRevision(rev: number) {
 }
 
 export function resetChatClient() {
-  snapshot = { connected: false, rev: 0, events: [] }
+  snapshot = { connected: false, rev: 0, resetEpoch: snapshot.resetEpoch + 1, events: [] }
   preview = null
+  sequence = 0
   transport = null
   emitChat()
   emitPreview()
 }
+
+/** Dependency-free state seam for reset and panel protocol tests. */
+export function inspectChatClient(): ChatSnapshot { return snapshot }
 
 export function handleServerChatFrame(frame: ServerChatFrame) {
   if (frame.type === "selection.set") useSquig.getState().setSelection(frame.ids)
@@ -85,7 +89,7 @@ export function useAgentChat(): ChatSnapshot {
   return useSyncExternalStore(
     (listener) => { chatListeners.add(listener); return () => chatListeners.delete(listener) },
     () => snapshot,
-    () => ({ connected: false, rev: 0, events: [] })
+    () => ({ connected: false, rev: 0, resetEpoch: 0, events: [] })
   )
 }
 

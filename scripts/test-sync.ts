@@ -33,6 +33,7 @@ const {
   SquigSyncCore,
   chunkCommands,
   createPageClientId,
+  loadPageClientId,
   diffDocs,
   startSquigSync,
 } = await import("../lib/agent/sync.ts")
@@ -184,12 +185,20 @@ function check(name: string, condition: boolean, detail = "") {
   check("serializable ops: deletion round-trips exactly", sameValue(apply(before, wire), after))
 }
 
-// A duplicated browser tab gets a fresh page identity; reconnects retain the id captured by that page.
+// The same tab reclaims its identity across reloads; independent realms can still allocate fresh ids.
 {
+  const values = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => void values.set(key, value),
+  }
+  const reloadedFirst = loadPageClientId(storage)
+  const reloadedSecond = loadPageClientId(storage)
   const firstPage = createPageClientId()
-  const duplicatedPage = createPageClientId()
-  check("page identity: independently initialized pages cannot collide", firstPage !== duplicatedPage)
-  check("page identity: no id is persisted in sessionStorage", ![...local.keys()].some((key) => key.includes("sync-client-id")))
+  const secondPage = createPageClientId()
+  check("page identity: one tab reuses its narrow session identity", reloadedFirst === reloadedSecond && values.size === 1)
+  check("page identity: independently initialized realms can still allocate distinct ids", firstPage !== secondPage)
+  check("page identity: unavailable session storage falls back safely", typeof loadPageClientId({ getItem: () => { throw new Error("blocked") }, setItem: () => { throw new Error("blocked") } }) === "string")
 }
 
 // Pending intent storage is versioned, bounded, malformed-data safe, and document-scoped.

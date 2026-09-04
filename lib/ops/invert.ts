@@ -14,8 +14,12 @@ const INVERT_CONTEXT: OpContext = {
 }
 
 function restorationPatch(current: SquigNode, wanted: SquigNode): Partial<SquigNode> {
-  const patch: Record<string, unknown> = { ...wanted }
-  for (const key of Object.keys(current)) if (!(key in wanted)) patch[key] = undefined
+  const patch: Record<string, unknown> = {}
+  const currentFields = current as unknown as Record<string, unknown>
+  const wantedFields = wanted as unknown as Record<string, unknown>
+  for (const key of new Set([...Object.keys(currentFields), ...Object.keys(wantedFields)])) {
+    if (!sameValue(currentFields[key], wantedFields[key])) patch[key] = wantedFields[key]
+  }
   return patch as Partial<SquigNode>
 }
 

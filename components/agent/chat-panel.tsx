@@ -10,7 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { sendChatFrame, useAgentChat } from "@/lib/agent/chat-client"
-import type { ChatModelChoice, ServerChatFrame } from "@/lib/agent/chat-protocol"
+import { isUndoableAgentCompletion, type ChatModelChoice, type ServerChatFrame } from "@/lib/agent/chat-protocol"
 import { useSquig } from "@/lib/store"
 
 interface Entry { id: string; role: "user" | "assistant" | "tool" | "error"; text: string }
@@ -47,6 +47,17 @@ export function AgentChatPanel() {
   const [pendingTurn, setPendingTurn] = useState<string | null>(null)
   const [undoTurn, setUndoTurn] = useState<string | null>(null)
   const seen = useRef(0)
+  const resetEpoch = useRef(chat.resetEpoch)
+
+  useEffect(() => {
+    if (resetEpoch.current === chat.resetEpoch) return
+    resetEpoch.current = chat.resetEpoch
+    seen.current = 0
+    setEntries([])
+    setActiveTurn(null)
+    setPendingTurn(null)
+    setUndoTurn(null)
+  }, [chat.resetEpoch])
 
   useEffect(() => {
     const unseen = chat.events.filter((event) => event.seq > seen.current)
@@ -58,7 +69,8 @@ export function AgentChatPanel() {
       if (frame.type === "chat.completed") {
         setActiveTurn(null)
         if (frame.status !== "pending") setPendingTurn(null)
-        if (frame.status === "completed" || frame.status === "accepted") setUndoTurn(frame.turnId)
+        if (isUndoableAgentCompletion(frame)) setUndoTurn(frame.turnId)
+        else if (frame.status === "completed" || frame.status === "accepted") setUndoTurn(null)
         if (frame.status === "undone") setUndoTurn(null)
       }
       if (frame.type === "chat.error") setActiveTurn(null)

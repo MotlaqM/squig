@@ -33,9 +33,13 @@ const held = new Map<string, string>()
 const { ModelContextShim, executeToolByName } = await import("../lib/agent/model-context-shim.ts")
 const { registerSquigTools, V1_TOOL_NAMES } = await import("../lib/agent/tools.ts")
 const { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_NAMES } = await import("../lib/agent/server-tools.ts")
+const { MAX_AGENT_STATE_BYTES, assertAgentStateBudget, serializedAgentStateBytes } = await import("../lib/agent/state-budget.ts")
+const { MAX_MODEL_CONTEXT_BYTES, boundedToolResultMessage } = await import("../lib/agent/model-context-budget.ts")
+const { handleServerChatFrame, inspectChatClient, resetChatClient } = await import("../lib/agent/chat-client.ts")
+const { isUndoableAgentCompletion } = await import("../lib/agent/chat-protocol.ts")
 const { applyOps } = await import("../lib/ops/invert.ts")
 const { useSquig } = await import("../lib/store.ts")
-import type { ArrowNode, DrawNode, SquigNode, TextNode } from "../lib/types.ts"
+import type { ArrowNode, DrawNode, ImageNode, SquigNode, TextNode } from "../lib/types.ts"
 
 let passed = 0
 const failures: string[] = []
@@ -261,6 +265,20 @@ const registration = await registerSquigTools(
   check("locked rejection leaves history untouched", JSON.stringify({ past: state().past, future: state().future }) === beforeHistory)
 }
 
+// A mixed server-side selection must not silently drop the locked member.
+{
+  const locked: SquigNode = { id: "server-locked", type: "shape", shape: "rect", fill: "none", x: 0, y: 0, w: 40, h: 40, seed: 1, locked: true }
+  const open: SquigNode = { id: "server-open", type: "shape", shape: "rect", fill: "none", x: 80, y: 0, w: 40, h: 40, seed: 2 }
+  const before = { nodes: { "server-locked": locked, "server-open": open }, order: ["server-locked", "server-open"] }
+  const draft = createServerToolDraft(before, ["server-locked", "server-open"])
+  const described = executeServerTool(draft, "get_selection", {}, { allocateId: () => "unused" }).outcome.data as { nodes: SquigNode[] }
+  check("server read selection retains locked and unlocked nodes", described.nodes.map((node) => node.id).join(",") === "server-locked,server-open")
+  await rejects("server selection mutation rejects any locked member", async () => {
+    executeServerTool(draft, "set_geometry", { ids: "selection", x: 25 }, { allocateId: () => "unused" })
+  })
+  check("server mixed-selection rejection leaves the draft untouched", JSON.stringify(draft.doc) === JSON.stringify(before))
+}
+
 // set_geometry uses the canvas scaling path for draw, text, and arrows.
 {
   const draw: DrawNode = { id: "draw", type: "draw", x: 0, y: 0, w: 20, h: 10, seed: 1, points: [[0, 0], [20, 10]] }
@@ -328,6 +346,51 @@ const registration = await registerSquigTools(
   check("server catalogue has exactly 24 tools", SERVER_TOOL_NAMES.length === 24 && new Set(SERVER_TOOL_NAMES).size === 24)
   check("compact inverse retains JSON-safe deletions", JSON.stringify(inverse).includes("null"))
   check("JSON-round-tripped compact inverse restores the document", JSON.stringify(restored) === JSON.stringify(base))
+}
+
+// Agent history must not duplicate inline image data for a geometry-only turn.
+{
+  const image = (id: string, x: number, fill: string): ImageNode => ({
+    id, seed: 1, type: "image", src: `data:image/png;base64,${fill.repeat(600_000)}`,
+    naturalW: 1200, naturalH: 800, x, y: 0, w: 600, h: 400,
+  })
+  const base = { nodes: { first: image("first", 0, "A"), second: image("second", 700, "B") }, order: ["first", "second"] }
+  let draft = createServerToolDraft(base, ["first", "second"])
+  draft = executeServerTool(draft, "set_geometry", { ids: "selection", x: 50 }, { allocateId: () => "unused" }).draft
+  const inverse = compactInverseOps(draft.inverseOps)
+  const inverseBytes = new TextEncoder().encode(JSON.stringify(inverse)).byteLength
+  const state = { ...draft.doc, rev: 1, clientHeads: {}, agentTurns: [{ inverseOps: inverse }] }
+  const stateBytes = serializedAgentStateBytes(state)
+  const restored = applyOps(draft.doc, JSON.parse(JSON.stringify(inverse)), { getDef: () => undefined, nanoid: () => "unused", seed: () => 1 })
+  check("large-image agent inverse stores only changed fields", inverseBytes < 10_000, `bytes=${inverseBytes}`)
+  check("large-image agent state stays below the row safety budget", stateBytes > 1_000_000 && stateBytes < MAX_AGENT_STATE_BYTES, `bytes=${stateBytes}`)
+  await rejects("agent state budget rejects an oversized persisted row", async () => {
+    assertAgentStateBudget({ ...state, padding: "x".repeat(MAX_AGENT_STATE_BYTES) })
+  })
+  check("large-image minimal inverse restores the exact document", JSON.stringify(restored) === JSON.stringify(base))
+}
+
+// Tool results are bounded before they can become another model-round input.
+{
+  const messages = [{ role: "system" as const, content: "Squig" }]
+  const small = boundedToolResultMessage(messages, "tool-small", { ok: true })
+  check("bounded model result creates one tool message", small.role === "tool" && small.tool_call_id === "tool-small")
+  await rejects("oversized tool result is refused before model context append", async () => {
+    boundedToolResultMessage(messages, "tool-large", { document: "x".repeat(MAX_MODEL_CONTEXT_BYTES) })
+  })
+}
+
+// A document reset gives the panel an explicit boundary for all local turn UI.
+{
+  resetChatClient()
+  const before = inspectChatClient()
+  handleServerChatFrame({ type: "chat.delta", turnId: "old-turn", delta: "old transcript" })
+  check("chat client records frames inside one reset epoch", inspectChatClient().events.length === 1)
+  resetChatClient()
+  const after = inspectChatClient()
+  check("chat reset clears events and advances the panel epoch", after.events.length === 0 && after.resetEpoch === before.resetEpoch + 1)
+  check("completed no-op turn is not offered for undo", !isUndoableAgentCompletion({ type: "chat.completed", turnId: "noop", rev: 0, status: "completed", affected: [] }))
+  check("completed changed turn remains undoable", isUndoableAgentCompletion({ type: "chat.completed", turnId: "changed", rev: 1, status: "completed", affected: ["node"] }))
 }
 
 // A document no-op after undo must hand the complete redo branch back.
