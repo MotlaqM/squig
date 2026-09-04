@@ -50,11 +50,23 @@ export function resetChatClient() {
   emitPreview()
 }
 
+function applyAuthoritativeChatReset(rev: number) {
+  snapshot = { connected: snapshot.connected, rev, resetEpoch: snapshot.resetEpoch + 1, events: [] }
+  preview = null
+  sequence = 0
+  emitChat()
+  emitPreview()
+}
+
 /** Dependency-free state seam for reset and panel protocol tests. */
 export function inspectChatClient(): ChatSnapshot { return snapshot }
 
 export function handleServerChatFrame(frame: ServerChatFrame) {
-  if (frame.type === "selection.set") useSquig.getState().setSelection(frame.ids)
+  if (frame.type === "chat.reset") {
+    applyAuthoritativeChatReset(frame.rev)
+    return
+  }
+  if (frame.type === "selection.set") useSquig.getState().setAgentSelection(frame.ids)
   if (frame.type === "review.pending") setPreview(frame)
   if (frame.type === "chat.completed" && frame.status !== "pending" && preview?.turnId === frame.turnId) {
     preview = null

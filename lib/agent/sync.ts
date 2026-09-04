@@ -33,7 +33,7 @@ import {
   type ServerOpMessage,
   type SnapshotMessage,
 } from "./protocol"
-import { isReviewIdentityFrame, isServerChatFrame } from "./chat-protocol"
+import { isReviewCapability, isReviewIdentityFrame, isServerChatFrame, type ReviewResumeFrame } from "./chat-protocol"
 import { handleServerChatFrame, resetChatClient, setChatRevision, setChatTransport } from "./chat-client"
 
 export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protocol"
@@ -515,14 +515,14 @@ export function loadReviewOwnerId(docId: string, storage?: Pick<Storage, "getIte
   if (!storage) return null
   try {
     const existing = storage.getItem(reviewOwnerStorageKey(docId))
-    return existing && /^[A-Za-z0-9._:-]{1,128}$/.test(existing) ? existing : null
+    return isReviewCapability(existing) ? existing : null
   } catch {
     return null
   }
 }
 
 export function saveReviewOwnerId(docId: string, reviewOwnerId: string, storage?: Pick<Storage, "setItem">): boolean {
-  if (!storage || !/^[A-Za-z0-9._:-]{1,128}$/.test(reviewOwnerId)) return false
+  if (!storage || !isReviewCapability(reviewOwnerId)) return false
   try {
     storage.setItem(reviewOwnerStorageKey(docId), reviewOwnerId)
     return true
@@ -539,11 +539,10 @@ function configuredWorkerUrl(): string | null {
   return ["localhost", "127.0.0.1"].includes(window.location.hostname) ? LOCAL_WORKER_URL : null
 }
 
-function wsUrl(workerUrl: string, docId: string, clientId: string, reviewOwnerId: string | null): string {
+function wsUrl(workerUrl: string, docId: string, clientId: string): string {
   const url = new URL(`/agents/squig-doc/${encodeURIComponent(docId)}`, workerUrl)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   url.searchParams.set("clientId", clientId)
-  if (reviewOwnerId) url.searchParams.set("reviewOwnerId", reviewOwnerId)
   return url.toString()
 }
 
@@ -620,7 +619,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     if (disposed) return
     let opened: WebSocket
     try {
-      opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId, loadReviewOwnerId(activeDocId, reviewOwnerStorage)))
+      opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId))
     } catch {
       setConnectedPersistenceMode(false)
       scheduleReconnect(session, sessionGeneration)
@@ -629,6 +628,8 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     socket = opened
     opened.addEventListener("open", () => {
       if (sessionGeneration !== generation) return
+      const reviewOwnerId = loadReviewOwnerId(activeDocId, reviewOwnerStorage)
+      opened.send(JSON.stringify({ type: "review.resume", ...(reviewOwnerId ? { reviewOwnerId } : {}) } satisfies ReviewResumeFrame))
       session.setTransportOpen(true)
       setChatTransport((frame) => opened.send(JSON.stringify(frame)))
     })

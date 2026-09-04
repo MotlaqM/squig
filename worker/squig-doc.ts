@@ -1,7 +1,7 @@
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents"
 import { nanoid } from "nanoid"
 import { z } from "zod"
-import { CHAT_MODELS, type ChatCompletedFrame, type ChatErrorFrame, type ReviewIdentityFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
+import { CHAT_MODELS, isReviewCapability, type ChatCompletedFrame, type ChatErrorFrame, type ChatResetFrame, type ReviewIdentityFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
 import { boundedToolResultMessage } from "../lib/agent/model-context-budget"
 import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
 import { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_DEFINITIONS, type ServerToolDraft } from "../lib/agent/server-tools"
@@ -46,7 +46,7 @@ export interface SquigDocState extends Doc {
   pendingReview?: PendingReview
 }
 
-interface SquigConnectionState { clientId: string; reviewOwnerId: string }
+interface SquigConnectionState { clientId: string; reviewOwnerId: string | null; reviewReady: boolean }
 type SnapshotReason = "duplicate" | "invalid" | "sequence_gap" | "stale_revision" | "resync"
 
 const id = z.string().min(1).max(128)
@@ -83,6 +83,7 @@ const chatStartSchema = z.object({
 }).strict()
 const reviewSchema = z.object({ type: z.enum(["review.accept", "review.reject"]), turnId: id, clientRev: z.number().int().nonnegative() }).strict()
 const undoSchema = z.object({ type: z.literal("agent.undo"), turnId: id, clientRev: z.number().int().nonnegative() }).strict()
+const reviewResumeSchema = z.object({ type: z.literal("review.resume"), reviewOwnerId: z.string().uuid().optional() }).strict()
 
 const REDUCER_CONTEXT: OpContext = {
   getDef: () => undefined,
@@ -103,20 +104,19 @@ function validBaseState(value: unknown): value is Omit<SquigDocState, "agentTurn
   return Object.values(state.clientHeads).every((head) => !!head && Number.isInteger(head.seq) && head.seq >= 0 && Number.isInteger(head.rev) && head.rev >= 0 && head.rev <= state.rev!)
 }
 
-function queryIdFrom(request: Request, key: "clientId" | "reviewOwnerId"): string | null {
-  const candidate = new URL(request.url).searchParams.get(key)
+function queryClientId(request: Request): string | null {
+  const candidate = new URL(request.url).searchParams.get("clientId")
   return candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) ? candidate : null
 }
 
-async function sameCapability(provided: string, expected: string): Promise<boolean> {
+function sameCapability(provided: string, expected: string): boolean {
   const encoder = new TextEncoder()
-  const [providedHash, expectedHash] = await Promise.all([
-    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
-    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
-  ])
-  // The Workers runtime extends SubtleCrypto with timingSafeEqual; lib.dom does not declare it.
+  const providedBytes = encoder.encode(provided)
+  const expectedBytes = encoder.encode(expected)
+  if (providedBytes.byteLength !== expectedBytes.byteLength) return false
+  // Workers extends SubtleCrypto with a synchronous constant-time comparison.
   const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual(a: ArrayBuffer, b: ArrayBuffer): boolean }
-  return subtle.timingSafeEqual(providedHash, expectedHash)
+  return subtle.timingSafeEqual(providedBytes.buffer, expectedBytes.buffer)
 }
 
 function boundedTurns(turns: AgentTurnRecord[]): AgentTurnRecord[] {
@@ -146,7 +146,7 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     }
     const turns = Array.isArray(this.state.agentTurns) ? this.state.agentTurns : []
     const pending = this.state.pendingReview as (PendingReview & { reviewOwnerId?: unknown }) | undefined
-    const pendingReview = pending && typeof pending.reviewOwnerId === "string" && pending.reviewOwnerId ? pending : undefined
+    const pendingReview = pending && isReviewCapability(pending.reviewOwnerId) ? pending : undefined
     if (turns !== this.state.agentTurns || pendingReview !== pending) {
       this.setState({ ...this.state, agentTurns: turns, pendingReview })
     }
@@ -154,22 +154,14 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
 
   shouldSendProtocolMessages() { return false }
 
-  async onConnect(connection: Connection, context: ConnectionContext) {
-    const clientId = queryIdFrom(context.request, "clientId")
+  onConnect(connection: Connection, context: ConnectionContext) {
+    const clientId = queryClientId(context.request)
     if (!clientId) {
       connection.close(1008, "A valid clientId is required")
       return
     }
-    const presented = queryIdFrom(context.request, "reviewOwnerId")
-    const pendingAtConnect = this.state.pendingReview
-    const presentedMatches = !!presented && !!pendingAtConnect && await sameCapability(presented, pendingAtConnect.reviewOwnerId)
-    const currentPending = this.state.pendingReview
-    const resumesPending = presentedMatches && currentPending?.turnId === pendingAtConnect?.turnId && currentPending.reviewOwnerId === pendingAtConnect.reviewOwnerId
-    const reviewOwnerId = resumesPending && currentPending ? currentPending.reviewOwnerId : crypto.randomUUID()
-    connection.setState({ clientId, reviewOwnerId } satisfies SquigConnectionState)
-    connection.send(JSON.stringify({ type: "review.identity", reviewOwnerId } satisfies ReviewIdentityFrame))
+    connection.setState({ clientId, reviewOwnerId: null, reviewReady: false } satisfies SquigConnectionState)
     this.sendSnapshot(connection, clientId)
-    if (resumesPending && currentPending) connection.send(JSON.stringify(this.pendingFrame(currentPending)))
   }
 
   async onMessage(connection: Connection, message: WSMessage) {
@@ -181,6 +173,16 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     let parsed: unknown
     try { parsed = JSON.parse(message) } catch {
       this.sendSnapshot(connection, clientId, "invalid")
+      return
+    }
+
+    const resume = reviewResumeSchema.safeParse(parsed)
+    if (resume.success) {
+      this.handleReviewResume(connection, resume.data.reviewOwnerId)
+      return
+    }
+    if (!this.connectionReviewReady(connection)) {
+      connection.close(1008, "Review handshake required")
       return
     }
 
@@ -241,7 +243,18 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     }
     if (!this.persistState(next)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     this.broadcast(JSON.stringify({ type: "op", ops: command.ops, rev, by: clientId, clientSeq: command.clientSeq }))
-    if (invalidated && state.pendingReview) this.sendToReviewOwner(state.pendingReview.reviewOwnerId, this.completedFrame(invalidated))
+    if (invalidated && state.pendingReview) this.rotateInvalidatedReviewOwner(state.pendingReview.reviewOwnerId, this.completedFrame(invalidated))
+  }
+
+  private handleReviewResume(connection: Connection, presented?: string) {
+    if (this.connectionReviewReady(connection)) return
+    const pending = this.state.pendingReview
+    const resumesPending = !!presented && !!pending && sameCapability(presented, pending.reviewOwnerId)
+    const reviewOwnerId = resumesPending && pending ? pending.reviewOwnerId : crypto.randomUUID()
+    connection.setState({ clientId: this.connectionClientId(connection), reviewOwnerId, reviewReady: true } satisfies SquigConnectionState)
+    connection.send(JSON.stringify({ type: "review.identity", reviewOwnerId } satisfies ReviewIdentityFrame))
+    connection.send(JSON.stringify({ type: "chat.reset", rev: this.state.rev } satisfies ChatResetFrame))
+    if (resumesPending && pending) connection.send(JSON.stringify(this.pendingFrame(pending)))
   }
 
   private async handleChatStart(connection: Connection, command: z.infer<typeof chatStartSchema>) {
@@ -429,10 +442,17 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     return (connection.state as SquigConnectionState | null)?.reviewOwnerId ?? "invalid-review-owner"
   }
 
-  private sendToReviewOwner(reviewOwnerId: string, frame: ChatCompletedFrame) {
-    const message = JSON.stringify(frame)
+  private connectionReviewReady(connection: Connection): boolean {
+    return (connection.state as SquigConnectionState | null)?.reviewReady === true
+  }
+
+  private rotateInvalidatedReviewOwner(reviewOwnerId: string, frame: ChatCompletedFrame) {
+    const nextReviewOwnerId = crypto.randomUUID()
     for (const connection of this.getConnections<SquigConnectionState>()) {
-      if (connection.state?.reviewOwnerId === reviewOwnerId) connection.send(message)
+      if (!connection.state?.reviewReady || connection.state.reviewOwnerId !== reviewOwnerId) continue
+      connection.setState({ ...connection.state, reviewOwnerId: nextReviewOwnerId })
+      connection.send(JSON.stringify({ type: "review.identity", reviewOwnerId: nextReviewOwnerId } satisfies ReviewIdentityFrame))
+      connection.send(JSON.stringify(frame))
     }
   }
 

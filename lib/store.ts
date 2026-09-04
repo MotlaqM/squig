@@ -179,6 +179,8 @@ interface SquigState {
   setGrid: (on: boolean) => void
   setViewport: (v: Viewport) => void
   setSelection: (ids: string[], groupId?: string | null) => void
+  /** Select agent-affected nodes even when the turn just locked them. */
+  setAgentSelection: (ids: string[]) => void
   setCommandOpen: (open: boolean) => void
   setContextMenu: (m: ContextMenuState | null) => void
   setRenamingFile: (on: boolean) => void
@@ -1060,6 +1062,18 @@ export const useSquig = create<SquigState>((set, get) => ({
       // path doesn't have to say so; see the note at the foot of this file,
       // which says it for every path.
       return { selection: next, selectionGroupId: nextGroup }
+    })
+  },
+  setAgentSelection: (ids) => {
+    set((s) => {
+      const want = new Set(ids.filter((id) => !!s.nodes[id]))
+      const next = s.order.filter((id) => want.has(id))
+      if (
+        s.selectionGroupId === null &&
+        next.length === s.selection.length &&
+        next.every((id, i) => s.selection[i] === id)
+      ) return s
+      return { selection: next, selectionGroupId: null }
     })
   },
   setCommandOpen: (open) =>

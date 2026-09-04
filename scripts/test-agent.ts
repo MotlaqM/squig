@@ -35,7 +35,7 @@ const { registerSquigTools, V1_TOOL_NAMES } = await import("../lib/agent/tools.t
 const { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_NAMES } = await import("../lib/agent/server-tools.ts")
 const { MAX_AGENT_STATE_BYTES, assertAgentStateBudget, serializedAgentStateBytes } = await import("../lib/agent/state-budget.ts")
 const { MAX_MODEL_CONTEXT_BYTES, boundedToolResultMessage } = await import("../lib/agent/model-context-budget.ts")
-const { handleServerChatFrame, inspectChatClient, resetChatClient } = await import("../lib/agent/chat-client.ts")
+const { handleServerChatFrame, inspectChatClient, resetChatClient, setChatTransport } = await import("../lib/agent/chat-client.ts")
 const { isUndoableAgentCompletion } = await import("../lib/agent/chat-protocol.ts")
 const { applyOps } = await import("../lib/ops/invert.ts")
 const { useSquig } = await import("../lib/store.ts")
@@ -391,6 +391,30 @@ const registration = await registerSquigTools(
   check("chat reset clears events and advances the panel epoch", after.events.length === 0 && after.resetEpoch === before.resetEpoch + 1)
   check("completed no-op turn is not offered for undo", !isUndoableAgentCompletion({ type: "chat.completed", turnId: "noop", rev: 0, status: "completed", affected: [] }))
   check("completed changed turn remains undoable", isUndoableAgentCompletion({ type: "chat.completed", turnId: "changed", rev: 1, status: "completed", affected: ["node"] }))
+}
+
+// A server reset clears stale panel state without dropping the live transport.
+{
+  resetChatClient()
+  setChatTransport(() => undefined)
+  handleServerChatFrame({ type: "chat.delta", turnId: "stale-review", delta: "prepared" })
+  const before = inspectChatClient()
+  handleServerChatFrame({ type: "chat.reset", rev: 7 })
+  const after = inspectChatClient()
+  check("authoritative chat reset clears old turn events", after.events.length === 0)
+  check("authoritative chat reset advances the panel epoch", after.resetEpoch === before.resetEpoch + 1)
+  check("authoritative chat reset preserves live transport and revision", after.connected && after.rev === 7)
+  resetChatClient()
+}
+
+// Agent selection may reveal its own newly locked work without changing human selection rules.
+{
+  const locked: SquigNode = { id: "agent-locked", type: "shape", shape: "rect", fill: "none", x: 0, y: 0, w: 40, h: 40, seed: 1, locked: true }
+  reset({ "agent-locked": locked }, ["agent-locked"])
+  state().setSelection(["agent-locked"])
+  check("human selection still refuses locked nodes", state().selection.length === 0)
+  handleServerChatFrame({ type: "selection.set", turnId: "lock-turn", rev: 1, ids: ["agent-locked"] })
+  check("agent selection reaches the real store with its locked affected node", state().selection.join(",") === "agent-locked")
 }
 
 // A document no-op after undo must hand the complete redo branch back.

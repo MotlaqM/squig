@@ -21,10 +21,12 @@ export interface ReviewAcceptFrame extends RevisionedTurnFrame { type: "review.a
 export interface ReviewRejectFrame extends RevisionedTurnFrame { type: "review.reject" }
 export interface AgentUndoFrame extends RevisionedTurnFrame { type: "agent.undo" }
 export type ClientChatFrame = ChatStartFrame | ReviewAcceptFrame | ReviewRejectFrame | AgentUndoFrame
+export interface ReviewResumeFrame { type: "review.resume"; reviewOwnerId?: string }
 
 export interface ChatDeltaFrame { type: "chat.delta"; turnId: string; delta: string }
 export interface ChatToolFrame { type: "chat.tool"; turnId: string; name: string; summary: string; affected: string[] }
 export interface ReviewIdentityFrame { type: "review.identity"; reviewOwnerId: string }
+export interface ChatResetFrame { type: "chat.reset"; rev: number }
 export interface ReviewPendingFrame {
   type: "review.pending"
   turnId: string
@@ -54,16 +56,20 @@ export interface ChatErrorFrame {
   code: "invalid" | "stale_revision" | "stale_review" | "turn_in_progress" | "not_found" | "undo_conflict" | "model_error" | "tool_error"
   message: string
 }
-export type ServerChatFrame = ChatDeltaFrame | ChatToolFrame | ReviewPendingFrame | ChatCompletedFrame | SelectionSetFrame | ChatErrorFrame
+export type ServerChatFrame = ChatDeltaFrame | ChatToolFrame | ReviewPendingFrame | ChatCompletedFrame | SelectionSetFrame | ChatErrorFrame | ChatResetFrame
+
+export function isReviewCapability(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+}
 
 export function isReviewIdentityFrame(value: unknown): value is ReviewIdentityFrame {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const candidate = value as { type?: unknown; reviewOwnerId?: unknown }
-  return candidate.type === "review.identity" && typeof candidate.reviewOwnerId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate.reviewOwnerId)
+  return candidate.type === "review.identity" && isReviewCapability(candidate.reviewOwnerId)
 }
 
 export function isServerChatFrame(value: unknown): value is ServerChatFrame {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false
   const type = (value as { type?: unknown }).type
-  return typeof type === "string" && ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error"].includes(type)
+  return typeof type === "string" && ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error", "chat.reset"].includes(type)
 }

@@ -195,7 +195,7 @@ function check(name: string, condition: boolean, detail = "") {
     setItem: (key: string, value: string) => void sourceValues.set(key, value),
   }
   const documentId = "review-capability-copy"
-  const serverIssuedOwnerId = "server-issued-review-owner"
+  const serverIssuedOwnerId = "22222222-2222-4222-8222-222222222222"
   check("review identity: server-issued capability is stored for one document", saveReviewOwnerId(documentId, serverIssuedOwnerId, sourceStorage))
   const copiedValues = new Map(sourceValues)
   const copiedStorage = {
@@ -751,9 +751,19 @@ function check(name: string, condition: boolean, detail = "") {
     }
   }
   ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeSocket
+  const handshakeDocId = useSquig.getState().docId
+  const presentedReviewOwnerId = "11111111-1111-4111-8111-111111111111"
+  saveReviewOwnerId(handshakeDocId, presentedReviewOwnerId, sessionStorage)
   const stopConnected = startSquigSync()
   const socket = FakeSocket.instances.at(-1)!
   socket.open()
+  const firstClientFrame = JSON.parse(socket.sent[0] ?? "null") as { type?: string; reviewOwnerId?: string }
+  const openedUrl = new URL(socket.url)
+  check("review handshake: capability is absent from the WebSocket URL", !openedUrl.searchParams.has("reviewOwnerId") && !socket.url.includes(presentedReviewOwnerId))
+  check("review handshake: resume is the first private post-connect frame", firstClientFrame.type === "review.resume" && firstClientFrame.reviewOwnerId === presentedReviewOwnerId)
+  const rotatedReviewOwnerId = "33333333-3333-4333-8333-333333333333"
+  socket.message({ type: "review.identity", reviewOwnerId: rotatedReviewOwnerId })
+  check("review handshake: privately reissued capability replaces the stored token", loadReviewOwnerId(handshakeDocId, sessionStorage) === rotatedReviewOwnerId)
   check("persistence lease: an open socket without a snapshot stays offline-guarded", !isConnectedPersistenceMode())
   const snapshotDoc = { nodes: useSquig.getState().nodes, order: useSquig.getState().order }
   socket.message({ type: "snapshot", doc: snapshotDoc, rev: 0, acceptedClientSeq: 0 })

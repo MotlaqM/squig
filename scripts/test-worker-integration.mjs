@@ -35,28 +35,34 @@ class CoreClient {
     this.reviewOwnerId = reviewOwnerId
     this.doc = { nodes: {}, order: [] }
     this.messages = []
+    this.sentFrames = []
+    this.openHistory = []
     this.waiters = new Set()
     this.socket = null
     this.dropOwnEcho = false
+    this.panelPendingTurn = null
+    this.chatResetEpoch = 0
     this.core = new SquigSyncCore({
       clientId,
       initialDoc: this.doc,
-      send: (message) => {
-        if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message))
-      },
+      send: (message) => this.send(message),
       show: (doc) => { this.doc = clone(doc) },
     })
   }
 
   async open() {
+    const presentedReviewOwnerId = this.reviewOwnerId
     const url = new URL(`/agents/squig-doc/${encodeURIComponent(this.docId)}`, origin)
     url.protocol = "ws:"
     url.searchParams.set("clientId", this.clientId)
-    if (this.reviewOwnerId) url.searchParams.set("reviewOwnerId", this.reviewOwnerId)
+    const messageCursor = this.messages.length
+    const sentCursor = this.sentFrames.length
+    this.openHistory.push({ url: url.toString(), messageCursor, sentCursor, presentedReviewOwnerId })
     const socket = new WebSocket(url)
     this.socket = socket
     const opened = new Promise((resolveOpen, reject) => {
       socket.addEventListener("open", () => {
+        this.send({ type: "review.resume", ...(presentedReviewOwnerId ? { reviewOwnerId: presentedReviewOwnerId } : {}) })
         this.core.setTransportOpen(true)
         resolveOpen()
       }, { once: true })
@@ -65,11 +71,16 @@ class CoreClient {
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data))
       if (typeof message.type === "string" && message.type.startsWith("cf_agent_")) fatal = new Error(`Competing Agents SDK frame received: ${message.type}`)
-      const chatFrame = ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error"].includes(message.type)
+      const chatFrame = ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error", "chat.reset"].includes(message.type)
       const identityFrame = message.type === "review.identity" && typeof message.reviewOwnerId === "string"
       if (message.type !== "snapshot" && message.type !== "op" && !chatFrame && !identityFrame) fatal = new Error(`Unexpected WebSocket frame: ${message.type}`)
       this.messages.push(message)
       if (identityFrame) this.reviewOwnerId = message.reviewOwnerId
+      else if (message.type === "chat.reset") {
+        this.panelPendingTurn = null
+        this.chatResetEpoch++
+      } else if (message.type === "review.pending") this.panelPendingTurn = message.turnId
+      else if (message.type === "chat.completed" && message.status !== "pending" && this.panelPendingTurn === message.turnId) this.panelPendingTurn = null
       else if (message.type === "snapshot") this.core.handleSnapshot(message)
       else if (message.type === "op") {
         if (this.dropOwnEcho && message.by === this.clientId) this.dropOwnEcho = false
@@ -78,9 +89,12 @@ class CoreClient {
       for (const wake of this.waiters) wake()
     })
     socket.addEventListener("close", () => this.core.setTransportOpen(false), { once: true })
-    const cursor = this.messages.length
     await opened
-    await this.waitForMessage((message) => message.type === "snapshot", cursor)
+    await Promise.all([
+      this.waitForMessage((message) => message.type === "snapshot", messageCursor),
+      this.waitForMessage((message) => message.type === "review.identity", messageCursor),
+      this.waitForMessage((message) => message.type === "chat.reset", messageCursor),
+    ])
     return this
   }
 
@@ -131,6 +145,7 @@ class CoreClient {
 
   send(frame) {
     if (this.socket?.readyState !== WebSocket.OPEN) throw new Error(`${this.clientId} is not connected`)
+    this.sentFrames.push(clone(frame))
     this.socket.send(JSON.stringify(frame))
   }
 }
@@ -189,6 +204,25 @@ async function startChat(client, frame) {
   }
 }
 
+async function sendBeforeReviewHandshake(docId) {
+  const url = new URL(`/agents/squig-doc/${encodeURIComponent(docId)}`, origin)
+  url.protocol = "ws:"
+  url.searchParams.set("clientId", "handshake-race")
+  const socket = new WebSocket(url)
+  const messages = []
+  socket.addEventListener("message", (event) => messages.push(JSON.parse(String(event.data))))
+  await new Promise((resolveOpen, reject) => {
+    socket.addEventListener("open", resolveOpen, { once: true })
+    socket.addEventListener("error", () => reject(new Error("Handshake race socket failed to open")), { once: true })
+  })
+  await new Promise((resolveClose, reject) => {
+    const timer = setTimeout(() => reject(new Error("Unhandshaken command was not refused")), 2000)
+    socket.addEventListener("close", () => { clearTimeout(timer); resolveClose() }, { once: true })
+    socket.send(JSON.stringify({ type: "chat.start", turnId: "too-early", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] }))
+  })
+  return messages
+}
+
 async function run() {
   assert(persistDir.endsWith("/.wrangler/state/phase4-integration"), "Refusing to clear an unexpected persistence path")
   rmSync(persistDir, { recursive: true, force: true })
@@ -208,9 +242,17 @@ async function run() {
     assert(preflight.status === 204 && preflight.headers.get("Access-Control-Allow-Origin") === appOrigin && preflight.headers.get("Access-Control-Allow-Credentials") === "true", `local preflight rejected ${appOrigin}`)
   }
 
+  const refusedBeforeHandshake = await sendBeforeReviewHandshake("phase4-handshake-race")
+  assert(refusedBeforeHandshake.some((message) => message.type === "snapshot") && !refusedBeforeHandshake.some((message) => message.type === "chat.completed" || message.type === "review.pending"), "command raced ahead of the required private review handshake")
+
   const docId = "phase3-two-client-proof"
   const [a, b] = await Promise.all([new CoreClient(docId, "integration-a").open(), new CoreClient(docId, "integration-b").open()])
   assert(a.core.inspect().serverRev === 0 && b.core.inspect().serverRev === 0, "new proof document did not start at rev 0")
+  const initialOpen = a.openHistory[0]
+  assert(!new URL(initialOpen.url).searchParams.has("reviewOwnerId") && !initialOpen.url.includes(a.reviewOwnerId), "review capability leaked into the WebSocket URL")
+  assert(a.sentFrames[initialOpen.sentCursor]?.type === "review.resume", "review resume was not the first post-connect client frame")
+  const initialServerTypes = a.messages.slice(initialOpen.messageCursor).map((message) => message.type)
+  assert(initialServerTypes.indexOf("review.identity") >= 0 && initialServerTypes.indexOf("review.identity") < initialServerTypes.indexOf("chat.reset"), "server did not establish private review identity before authoritative chat reset")
 
   const gapCursor = a.messages.length
   a.socket.send(JSON.stringify({ type: "op", ops: [{ t: "add", node: shape("gap", -10) }], clientRev: 0, clientId: a.clientId, clientSeq: 2 }))
@@ -324,6 +366,11 @@ async function run() {
   const recovered = await reviewReloadA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-accept", 0, 5000)
   await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   assert(reviewReloadA.clientId !== reviewA.clientId && reviewReloadA.reviewOwnerId === ownerCapability && recovered.baseRev === 0 && recovered.ops.length === 1, "owning tab did not recover pending review with a new sync id and its private capability")
+  const recoveredOpen = reviewReloadA.openHistory[0]
+  const recoveredTypes = reviewReloadA.messages.slice(recoveredOpen.messageCursor).map((message) => message.type)
+  assert(!new URL(recoveredOpen.url).searchParams.has("reviewOwnerId") && !recoveredOpen.url.includes(ownerCapability), "valid recovery exposed its review capability in the URL")
+  assert(reviewReloadA.sentFrames[recoveredOpen.sentCursor]?.type === "review.resume" && reviewReloadA.sentFrames[recoveredOpen.sentCursor]?.reviewOwnerId === ownerCapability, "valid recovery did not present its capability as the first private frame")
+  assert(recoveredTypes.indexOf("review.identity") < recoveredTypes.indexOf("chat.reset") && recoveredTypes.indexOf("chat.reset") < recoveredTypes.indexOf("review.pending"), "valid recovery did not reset stale panel state before replaying pending review")
   assert(!reviewReloadB.messages.some((message) => message.type === "review.pending"), "other client recovered someone else's pending review")
   const acceptCursor = reviewReloadA.messages.length
   const acceptedBCursor = reviewReloadB.messages.length
@@ -363,17 +410,42 @@ async function run() {
   staleB.core.localOperations([{ t: "add", node: shape("human-change", 0) }])
   await waitConverged([staleA, staleB], 1)
   await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected", staleCompletionCursor)
+  assert(staleA.reviewOwnerId !== staleOwnerCapability, "live review owner capability was not rotated on human invalidation")
   assert(!staleB.messages.slice(staleBCursor).some((message) => message.type === "chat.completed" && message.turnId === "review-stale"), "pending invalidation completion leaked beyond its owner")
   const staleAcceptCursor = staleA.messages.length
   staleA.send({ type: "review.accept", turnId: "review-stale", clientRev: 1 })
   await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected", staleAcceptCursor)
   assert(staleA.doc.order.join(",") === "human-change" && staleA.core.inspect().serverRev === 1, "invalidated review accept modified the document")
-  await Promise.all([staleA.close(), staleB.close()])
-  const staleReload = await new CoreClient("phase4-review-stale", "stale-reloaded", staleOwnerCapability).open()
+  const rotatedCapability = staleA.reviewOwnerId
+  const nextPendingCursor = staleA.messages.length
+  staleA.send({ type: "chat.start", turnId: "after-invalidation-review", clientRev: 1, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
+  await staleA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "after-invalidation-review", nextPendingCursor, 5000)
+  const staleTokenClient = await new CoreClient("phase4-review-stale", "stale-token-client", staleOwnerCapability).open()
   await new Promise((resolveWait) => setTimeout(resolveWait, 100))
-  assert(!staleReload.messages.some((message) => message.type === "review.pending"), "invalidated pending review reappeared after reconnect")
-  const afterInvalidation = await startChat(staleReload, { type: "chat.start", turnId: "after-invalidation", clientRev: 1, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
-  assert(afterInvalidation.completed.rev === 2, "invalidated pending review continued blocking new turns")
+  assert(staleTokenClient.reviewOwnerId !== staleOwnerCapability && staleTokenClient.reviewOwnerId !== rotatedCapability && !staleTokenClient.messages.some((message) => message.type === "review.pending"), "invalidated review token recovered a later pending review")
+  const staleTokenCursor = staleTokenClient.messages.length
+  staleTokenClient.send({ type: "review.accept", turnId: "after-invalidation-review", clientRev: 1 })
+  await staleTokenClient.waitForMessage((message) => message.type === "chat.error" && message.turnId === "after-invalidation-review" && message.code === "not_found", staleTokenCursor)
+  const cleanupCursor = staleA.messages.length
+  staleA.send({ type: "review.reject", turnId: "after-invalidation-review", clientRev: 1 })
+  await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "after-invalidation-review" && message.status === "rejected", cleanupCursor)
+
+  const [disconnectedA, disconnectedB] = await openPair("phase4-review-disconnected", "disconnected")
+  const disconnectedPendingCursor = disconnectedA.messages.length
+  disconnectedA.send({ type: "chat.start", turnId: "disconnected-review", clientRev: 0, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
+  await disconnectedA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "disconnected-review", disconnectedPendingCursor, 5000)
+  const disconnectedCapability = disconnectedA.reviewOwnerId
+  const disconnectedResetEpoch = disconnectedA.chatResetEpoch
+  assert(disconnectedA.panelPendingTurn === "disconnected-review", "disconnected review owner did not begin with local pending state")
+  await disconnectedA.close()
+  disconnectedB.core.localOperations([{ t: "add", node: shape("disconnected-human-change", 0) }])
+  await waitConverged([disconnectedB], 1)
+  const disconnectedReconnectCursor = disconnectedA.messages.length
+  await disconnectedA.open()
+  assert(disconnectedA.panelPendingTurn === null && disconnectedA.chatResetEpoch === disconnectedResetEpoch + 1, "authoritative reconnect did not clear the disconnected owner's stale pending panel state")
+  assert(disconnectedA.reviewOwnerId !== disconnectedCapability && !disconnectedA.messages.slice(disconnectedReconnectCursor).some((message) => message.type === "review.pending"), "disconnected invalidated review recovered with its stale capability")
+  const afterDisconnectedInvalidation = await startChat(disconnectedA, { type: "chat.start", turnId: "after-disconnected-invalidation", clientRev: 1, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
+  assert(afterDisconnectedInvalidation.completed.rev === 2, "reconnected owner remained blocked by an invalidated review")
 
   const [conflictA, conflictB] = await openPair("phase4-undo-conflict", "conflict")
   await startChat(conflictA, { type: "chat.start", turnId: "contested-turn", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
@@ -401,7 +473,7 @@ async function run() {
   assert(landingSelection?.ids.length === 7 && landingA.doc.order.every((id) => landingSelection.ids.includes(id)), "landing requester selection did not contain all seven affected nodes")
   assert(!landingB.messages.slice(landingBCursor).some((message) => message.type === "selection.set"), "landing non-requester received selection.set")
 
-  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), lockA.close(), lockB.close(), rejectA.close(), rejectB.close(), staleReload.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
+  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), lockA.close(), lockB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), staleTokenClient.close(), disconnectedA.close(), disconnectedB.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
 
   assert(!fatal, fatal?.message ?? "protocol failure")
   console.log(JSON.stringify({
@@ -417,7 +489,7 @@ async function run() {
     security: "both loopback origins/preflights allowed locally; foreign docs and agent origins rejected",
     wranglerRestart: "state and D1 persisted",
     fakeButton: "one revision at 100,100; requester-only selection",
-    review: "server-capability recovery/control passed; spoof refused; human revision invalidated pending review",
+    review: "private handshake/recovery passed; spoof and stale token refused; live/disconnected invalidation cleared and rotated",
     lockedSelection: "requester retained its newly locked affected node; collaborator received no selection",
     agentUndo: "exact restore passed; contested undo refused",
     noOp: "zero revision and no affected nodes",
