@@ -5,7 +5,7 @@ import { resolve } from "node:path"
 const { SquigSyncCore } = await import("../lib/agent/sync.ts")
 
 const project = resolve(import.meta.dirname, "..")
-const persistDir = resolve(project, ".wrangler/state/phase3-integration")
+const persistDir = resolve(project, ".wrangler/state/phase4-integration")
 const port = 8789
 const origin = `http://127.0.0.1:${port}`
 let worker = null
@@ -61,11 +61,14 @@ class CoreClient {
     socket.addEventListener("message", (event) => {
       const message = JSON.parse(String(event.data))
       if (typeof message.type === "string" && message.type.startsWith("cf_agent_")) fatal = new Error(`Competing Agents SDK frame received: ${message.type}`)
-      if (message.type !== "snapshot" && message.type !== "op") fatal = new Error(`Unexpected WebSocket frame: ${message.type}`)
+      const chatFrame = ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error"].includes(message.type)
+      if (message.type !== "snapshot" && message.type !== "op" && !chatFrame) fatal = new Error(`Unexpected WebSocket frame: ${message.type}`)
       this.messages.push(message)
       if (message.type === "snapshot") this.core.handleSnapshot(message)
-      else if (this.dropOwnEcho && message.by === this.clientId) this.dropOwnEcho = false
-      else this.core.handleServerOp(message)
+      else if (message.type === "op") {
+        if (this.dropOwnEcho && message.by === this.clientId) this.dropOwnEcho = false
+        else this.core.handleServerOp(message)
+      }
       for (const wake of this.waiters) wake()
     })
     socket.addEventListener("close", () => this.core.setTransportOpen(false), { once: true })
@@ -119,6 +122,11 @@ class CoreClient {
     })
     if (this.socket === socket) this.socket = null
   }
+
+  send(frame) {
+    if (this.socket?.readyState !== WebSocket.OPEN) throw new Error(`${this.clientId} is not connected`)
+    this.socket.send(JSON.stringify(frame))
+  }
 }
 
 async function waitForWorker() {
@@ -135,7 +143,7 @@ async function waitForWorker() {
 }
 
 async function startWorker() {
-  const child = spawn("pnpm", ["exec", "wrangler", "dev", "--local", "--var", "ENVIRONMENT:local", "--port", String(port), "--inspector-port", String(port + 1000), "--persist-to", persistDir, "--log-level", "error", "--show-interactive-dev-session=false"], {
+  const child = spawn("pnpm", ["exec", "wrangler", "dev", "--local", "--var", "ENVIRONMENT:local", "--var", "SQUIG_FAKE_MODEL:true", "--port", String(port), "--inspector-port", String(port + 1000), "--persist-to", persistDir, "--log-level", "error", "--show-interactive-dev-session=false"], {
     cwd: project,
     env: process.env,
     stdio: ["ignore", "pipe", "pipe"],
@@ -162,8 +170,21 @@ async function waitConverged(clients, rev) {
   assert(clients.every((client) => JSON.stringify(client.doc) === JSON.stringify(clients[0].doc)), `clients did not converge at rev ${rev}`)
 }
 
+async function openPair(docId, prefix) {
+  return Promise.all([new CoreClient(docId, `${prefix}-a`).open(), new CoreClient(docId, `${prefix}-b`).open()])
+}
+
+async function startChat(client, frame) {
+  const cursor = client.messages.length
+  client.send(frame)
+  return {
+    cursor,
+    completed: await client.waitForMessage((message) => message.type === "chat.completed" && message.turnId === frame.turnId, cursor, 5000),
+  }
+}
+
 async function run() {
-  assert(persistDir.endsWith("/.wrangler/state/phase3-integration"), "Refusing to clear an unexpected persistence path")
+  assert(persistDir.endsWith("/.wrangler/state/phase4-integration"), "Refusing to clear an unexpected persistence path")
   rmSync(persistDir, { recursive: true, force: true })
   const migration = spawnSync("pnpm", ["exec", "wrangler", "d1", "migrations", "apply", "DOCS_DB", "--local", "--persist-to", persistDir], { cwd: project, env: process.env, encoding: "utf8" })
   if (migration.status !== 0) throw new Error(`Local D1 migration failed\n${migration.stdout}\n${migration.stderr}`)
@@ -248,6 +269,76 @@ async function run() {
   assert(persistedIndex.docs.some((doc) => doc.id === docId && doc.name === "Phase 3 proof saved"), "D1 index did not survive wrangler restart")
   await persisted.close()
 
+  const [chatA, chatB] = await openPair("phase4-button", "chat")
+  const chatBCursor = chatB.messages.length
+  const button = await startChat(chatA, { type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  assert(button.completed.status === "completed" && button.completed.rev === 1, "fake button turn did not commit exactly one revision")
+  await waitConverged([chatA, chatB], 1)
+  const buttonNode = chatA.doc.order.map((id) => chatA.doc.nodes[id]).find((node) => node.type === "component" && node.kind === "button")
+  assert(buttonNode?.x === 100 && buttonNode?.y === 100, "fake model did not insert button at 100,100")
+  assert(chatA.messages.slice(button.cursor).some((message) => message.type === "selection.set" && message.ids.includes(buttonNode.id)), "requester did not receive agent selection")
+  assert(!chatB.messages.slice(chatBCursor).some((message) => message.type === "selection.set"), "non-requester received selection.set")
+  const chatDuplicateCursor = chatA.messages.length
+  chatA.send({ type: "chat.start", turnId: "button-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  await chatA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "button-turn", chatDuplicateCursor)
+  assert(chatA.core.inspect().serverRev === 1, "idempotent turn replay created another revision")
+  const undoCursor = chatA.messages.length
+  chatA.send({ type: "agent.undo", turnId: "button-turn", clientRev: 1 })
+  await chatA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "button-turn" && message.status === "undone", undoCursor)
+  await waitConverged([chatA, chatB], 2)
+  assert(chatA.doc.order.length === 0, "safe agent undo did not restore the pre-turn document")
+
+  const [reviewA, reviewB] = await openPair("phase4-review-accept", "review")
+  const reviewCursor = reviewA.messages.length
+  reviewA.send({ type: "chat.start", turnId: "review-accept", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  const pending = await reviewA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-accept", reviewCursor, 5000)
+  assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0 && pending.ops.length === 1, "pending review changed the serialized document")
+  const acceptCursor = reviewA.messages.length
+  reviewA.send({ type: "review.accept", turnId: "review-accept", clientRev: 0 })
+  await reviewA.waitForMessage((message) => message.type === "chat.completed" && message.status === "accepted", acceptCursor)
+  await waitConverged([reviewA, reviewB], 1)
+  assert(reviewA.doc.order.length === 1, "accepted review did not commit")
+
+  const [rejectA, rejectB] = await openPair("phase4-review-reject", "reject")
+  const rejectedPendingCursor = rejectA.messages.length
+  rejectA.send({ type: "chat.start", turnId: "review-reject", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  await rejectA.waitForMessage((message) => message.type === "review.pending", rejectedPendingCursor, 5000)
+  const rejectCursor = rejectA.messages.length
+  rejectA.send({ type: "review.reject", turnId: "review-reject", clientRev: 0 })
+  await rejectA.waitForMessage((message) => message.type === "chat.completed" && message.status === "rejected", rejectCursor)
+  assert(rejectA.core.inspect().serverRev === 0 && rejectA.doc.order.length === 0, "rejected review changed the document")
+
+  const [staleA, staleB] = await openPair("phase4-review-stale", "stale")
+  const stalePendingCursor = staleA.messages.length
+  staleA.send({ type: "chat.start", turnId: "review-stale", clientRev: 0, prompt: "Add a button", review: true, model: "default", selection: [] })
+  await staleA.waitForMessage((message) => message.type === "review.pending", stalePendingCursor, 5000)
+  staleB.core.localOperations([{ t: "add", node: shape("human-change", 0) }])
+  await waitConverged([staleA, staleB], 1)
+  const staleAcceptCursor = staleA.messages.length
+  staleA.send({ type: "review.accept", turnId: "review-stale", clientRev: 1 })
+  await staleA.waitForMessage((message) => message.type === "chat.error" && message.code === "stale_review", staleAcceptCursor)
+  assert(staleA.doc.order.join(",") === "human-change", "stale review modified the document")
+
+  const [conflictA, conflictB] = await openPair("phase4-undo-conflict", "conflict")
+  await startChat(conflictA, { type: "chat.start", turnId: "contested-turn", clientRev: 0, prompt: "Add a button", review: false, model: "default", selection: [] })
+  await waitConverged([conflictA, conflictB], 1)
+  conflictB.core.localOperations([{ t: "add", node: shape("after-agent", 0) }])
+  await waitConverged([conflictA, conflictB], 2)
+  const conflictCursor = conflictA.messages.length
+  conflictA.send({ type: "agent.undo", turnId: "contested-turn", clientRev: 2 })
+  await conflictA.waitForMessage((message) => message.type === "chat.error" && message.code === "undo_conflict", conflictCursor)
+  assert(conflictA.core.inspect().serverRev === 2 && conflictA.doc.order.length === 2, "contested undo changed the document")
+
+  const [landingA, landingB] = await openPair("phase4-landing", "landing")
+  const landing = await startChat(landingA, { type: "chat.start", turnId: "landing-turn", clientRev: 0, prompt: "Build a landing page", review: false, model: "default", selection: [] })
+  assert(landing.completed.rev === 1, "multi-round landing turn used more than one revision")
+  await waitConverged([landingA, landingB], 1)
+  const kinds = landingA.doc.order.map((id) => landingA.doc.nodes[id]).filter((node) => node.type === "component").map((node) => node.kind)
+  assert(kinds.length === 7 && kinds.filter((kind) => kind === "navbar").length === 1 && kinds.filter((kind) => kind === "hero").length === 1 && kinds.filter((kind) => kind === "card").length === 3 && kinds.filter((kind) => kind === "pricing-block").length === 1 && kinds.filter((kind) => kind === "footer").length === 1, `landing fixture was not the exact seven semantic nodes: ${kinds.join(",")}`)
+  assert(landingA.messages.slice(landing.cursor).filter((message) => message.type === "chat.tool").map((message) => message.name).join(",") === "list_components,batch", "landing fixture did not use the deterministic multi-round tool sequence")
+
+  await Promise.all([chatA.close(), chatB.close(), reviewA.close(), reviewB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), conflictA.close(), conflictB.close(), landingA.close(), landingB.close()])
+
   assert(!fatal, fatal?.message ?? "protocol failure")
   console.log(JSON.stringify({
     ok: true,
@@ -261,6 +352,10 @@ async function run() {
     connectedUndo: "SquigSyncCore preserved remote edit",
     security: "both loopback origins/preflights allowed locally; foreign docs and agent origins rejected",
     wranglerRestart: "state and D1 persisted",
+    fakeButton: "one revision at 100,100; requester-only selection",
+    review: "pending doc unchanged; accept, reject, and stale refusal passed",
+    agentUndo: "exact restore passed; contested undo refused",
+    landingFixture: "nav, hero, three features, pricing, footer in one multi-round revision",
   }, null, 2))
 }
 

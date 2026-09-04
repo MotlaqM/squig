@@ -71,6 +71,7 @@ import { TextEditOverlay } from "./text-edit-overlay"
 import { nodeVisualBounds, worldRouteHandle, type RouteHandle } from "@/lib/canvas/line-routing"
 import { SMALL_NUDGE } from "@/lib/nudge"
 import { constrainMoveTo45, constrainSnapToDirection, type DragDirection } from "@/lib/canvas/move"
+import { useReviewPreview } from "@/lib/agent/chat-client"
 
 /**
  * A gesture's zoom floor is not a constant: ⇧1 is allowed below MIN_ZOOM to
@@ -344,6 +345,8 @@ export function Canvas() {
   const viewport = useSquig((s) => s.viewport)
   const tool = useSquig((s) => s.tool)
   const grid = useSquig((s) => s.grid)
+  const reviewPreview = useReviewPreview()
+  const previewAffected = useMemo(() => new Set(reviewPreview?.affected ?? []), [reviewPreview])
 
   const placing = useSquig((s) => s.placing)
   const placingDrag = useSquig((s) => s.placingDrag)
@@ -2477,7 +2480,7 @@ export function Canvas() {
         <g data-squig-far={v.zoom < MIN_ZOOM ? "" : undefined} transform={`translate(${v.x} ${v.y}) scale(${v.zoom})`}>
           {order.map((id) => {
             const n = nodes[id]
-            if (!n || id === cropNode?.id) return null
+            if (!n || id === cropNode?.id || previewAffected.has(id)) return null
             // off the glass, so no paths for it — except for the one being
             // edited, which the editor is standing over and whose runs the
             // renderer has to keep agreeing with
@@ -2485,6 +2488,16 @@ export function Canvas() {
             return (
               <g key={id} transform={`translate(${n.x} ${n.y})`}>
                 <NodeSketch node={n} hiddenText={id === editingId ? editing?.hidden : undefined} />
+              </g>
+            )
+          })}
+          {reviewPreview?.doc.order.map((id) => {
+            if (!previewAffected.has(id)) return null
+            const n = reviewPreview.doc.nodes[id]
+            if (!n || !inViewBox(nodeVisualBounds(n), view)) return null
+            return (
+              <g key={`review-${id}`} data-squig-review-preview="" opacity={0.35} transform={`translate(${n.x} ${n.y})`}>
+                <NodeSketch node={n} />
               </g>
             )
           })}

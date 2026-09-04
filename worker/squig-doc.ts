@@ -1,27 +1,55 @@
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents"
+import { nanoid } from "nanoid"
 import { z } from "zod"
-import { validDocument } from "../lib/agent/validate"
-import { applyOp } from "../lib/ops/apply-op"
-import { seedFromId } from "../lib/ops/context"
-import type { Doc, Op, OpContext } from "../lib/ops/types"
+import { CHAT_MODELS, type ChatCompletedFrame, type ChatErrorFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
 import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
+import { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_DEFINITIONS } from "../lib/agent/server-tools"
+import { validDocument } from "../lib/agent/validate"
+import { seedFromId } from "../lib/ops/context"
+import { applyOps } from "../lib/ops/invert"
+import type { Doc, Op, OpContext } from "../lib/ops/types"
+import { resolveModel, runSquigModel, SYSTEM_PROMPT, type ModelMessage, type SquigModel } from "./model"
+
+const MAX_LEDGER_TURNS = 32
+const MAX_TOOL_ROUNDS = 8
+const MAX_TOOL_CALLS = 64
+
+interface AgentTurnRecord {
+  turnId: string
+  baseRev: number
+  committedRev: number
+  status: "committed" | "rejected" | "undone"
+  completion: "completed" | "accepted" | "rejected" | "undone"
+  model: SquigModel
+  inverseOps: Op[]
+  affected: string[]
+}
+
+interface PendingReview {
+  turnId: string
+  baseRev: number
+  model: SquigModel
+  ops: Op[]
+  inverseOps: Op[]
+  affected: string[]
+  selection: string[]
+  message: string
+}
 
 export interface SquigDocState extends Doc {
   rev: number
   clientHeads: Record<string, ClientHead>
+  agentTurns: AgentTurnRecord[]
+  pendingReview?: PendingReview
 }
 
-interface SquigConnectionState {
-  clientId: string
-}
-
+interface SquigConnectionState { clientId: string }
 type SnapshotReason = "duplicate" | "invalid" | "sequence_gap" | "stale_revision" | "resync"
 
 const id = z.string().min(1).max(128)
 const ids = z.array(id).max(10_000)
 const patch = z.record(z.string(), z.unknown())
 const finite = z.number().finite()
-
 const opSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("add"), node: z.record(z.string(), z.unknown()) }).strict(),
   z.object({ t: z.literal("update"), id, patch }).strict(),
@@ -39,38 +67,37 @@ const opSchema = z.discriminatedUnion("t", [
   z.object({ t: z.literal("stack"), ids, axis: z.enum(["h", "v"]), gap: finite.optional() }).strict(),
   z.object({ t: z.literal("matchSize"), ids, to: id, dims: z.enum(["w", "h", "both"]) }).strict(),
 ])
-
 const commandSchema = z.object({
-  type: z.literal("op"),
-  ops: z.array(opSchema).min(1).max(MAX_COMMAND_OPS),
-  clientRev: z.number().int().nonnegative(),
-  clientId: id,
-  clientSeq: z.number().int().positive(),
+  type: z.literal("op"), ops: z.array(opSchema).min(1).max(MAX_COMMAND_OPS), clientRev: z.number().int().nonnegative(),
+  clientId: id, clientSeq: z.number().int().positive(),
 }).strict()
-
 const resyncSchema = z.object({ type: z.literal("resync"), clientId: id }).strict()
+const viewportSchema = z.object({ x: finite, y: finite, zoom: finite.positive() }).strict()
+const chatStartSchema = z.object({
+  type: z.literal("chat.start"), turnId: id, clientRev: z.number().int().nonnegative(), prompt: z.string().trim().min(1).max(8_000),
+  review: z.boolean(), model: z.enum(CHAT_MODELS).optional(), selection: ids.optional(), viewport: viewportSchema.optional(),
+  viewportWidth: finite.positive().max(20_000).optional(), viewportHeight: finite.positive().max(20_000).optional(),
+}).strict()
+const reviewSchema = z.object({ type: z.enum(["review.accept", "review.reject"]), turnId: id, clientRev: z.number().int().nonnegative() }).strict()
+const undoSchema = z.object({ type: z.literal("agent.undo"), turnId: id, clientRev: z.number().int().nonnegative() }).strict()
 
 const REDUCER_CONTEXT: OpContext = {
   getDef: () => undefined,
-  nanoid: () => {
-    throw new Error("All operation identities must be resolved by the client")
-  },
+  nanoid: () => { throw new Error("All operation identities must be resolved before commit") },
   seed: seedFromId,
 }
 
 function emptyState(): SquigDocState {
-  return { nodes: {}, order: [], rev: 0, clientHeads: {} }
+  return { nodes: {}, order: [], rev: 0, clientHeads: {}, agentTurns: [] }
 }
 
-function validState(value: unknown): value is SquigDocState {
+function validBaseState(value: unknown): value is Omit<SquigDocState, "agentTurns"> & { agentTurns?: AgentTurnRecord[] } {
   if (!value || typeof value !== "object") return false
   const state = value as Partial<SquigDocState>
   if (!state.nodes || !Array.isArray(state.order) || !Number.isInteger(state.rev) || (state.rev ?? -1) < 0) return false
   if (!state.clientHeads || typeof state.clientHeads !== "object" || Array.isArray(state.clientHeads)) return false
   if (!validDocument({ nodes: state.nodes, order: state.order })) return false
-  return Object.values(state.clientHeads).every(
-    (head) => !!head && Number.isInteger(head.seq) && head.seq >= 0 && Number.isInteger(head.rev) && head.rev >= 0 && head.rev <= state.rev!
-  )
+  return Object.values(state.clientHeads).every((head) => !!head && Number.isInteger(head.seq) && head.seq >= 0 && Number.isInteger(head.rev) && head.rev >= 0 && head.rev <= state.rev!)
 }
 
 function clientIdFrom(request: Request): string | null {
@@ -78,18 +105,30 @@ function clientIdFrom(request: Request): string | null {
   return candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) ? candidate : null
 }
 
+function boundedTurns(turns: AgentTurnRecord[]): AgentTurnRecord[] {
+  return turns.slice(-MAX_LEDGER_TURNS)
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Unknown error"
+}
+
+class ToolExecutionError extends Error {}
+
 export class SquigDoc extends Agent<Env, SquigDocState> {
   initialState = emptyState()
-
   static options = { sendIdentityOnConnect: false }
+  private readonly activeTurns = new Set<string>()
 
   onStart() {
-    if (!validState(this.state)) this.setState(emptyState())
+    if (!validBaseState(this.state)) {
+      this.setState(emptyState())
+      return
+    }
+    if (!Array.isArray(this.state.agentTurns)) this.setState({ ...this.state, agentTurns: [] })
   }
 
-  shouldSendProtocolMessages() {
-    return false
-  }
+  shouldSendProtocolMessages() { return false }
 
   onConnect(connection: Connection, context: ConnectionContext) {
     const clientId = clientIdFrom(context.request)
@@ -101,93 +140,218 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     this.sendSnapshot(connection, clientId)
   }
 
-  onMessage(connection: Connection, message: WSMessage) {
+  async onMessage(connection: Connection, message: WSMessage) {
+    const clientId = this.connectionClientId(connection)
     if (typeof message !== "string" || new TextEncoder().encode(message).byteLength > MAX_COMMAND_BYTES) {
-      this.sendSnapshot(connection, this.connectionClientId(connection), "invalid")
+      this.sendSnapshot(connection, clientId, "invalid")
       return
     }
-
     let parsed: unknown
-    try {
-      parsed = JSON.parse(message)
-    } catch {
-      this.sendSnapshot(connection, this.connectionClientId(connection), "invalid")
+    try { parsed = JSON.parse(message) } catch {
+      this.sendSnapshot(connection, clientId, "invalid")
       return
     }
 
     const resync = resyncSchema.safeParse(parsed)
     if (resync.success) {
-      const clientId = this.connectionClientId(connection)
       this.sendSnapshot(connection, clientId, resync.data.clientId === clientId ? "resync" : "invalid")
       return
     }
-
     const command = commandSchema.safeParse(parsed)
-    const connectionClientId = this.connectionClientId(connection)
-    if (!command.success || command.data.clientId !== connectionClientId) {
-      this.sendSnapshot(connection, connectionClientId, "invalid")
+    if (command.success) {
+      this.handleClientOps(connection, clientId, command.data)
       return
     }
+    const start = chatStartSchema.safeParse(parsed)
+    if (start.success) {
+      await this.handleChatStart(connection, start.data)
+      return
+    }
+    const review = reviewSchema.safeParse(parsed)
+    if (review.success) {
+      if (review.data.type === "review.accept") this.handleReviewAccept(connection, review.data.turnId, review.data.clientRev)
+      else this.handleReviewReject(connection, review.data.turnId, review.data.clientRev)
+      return
+    }
+    const undo = undoSchema.safeParse(parsed)
+    if (undo.success) {
+      this.handleAgentUndo(connection, undo.data.turnId, undo.data.clientRev)
+      return
+    }
+    this.sendError(connection, "invalid", "Invalid Squig command", typeof parsed === "object" && parsed ? String((parsed as { turnId?: unknown }).turnId ?? "invalid") : "invalid")
+  }
 
+  private handleClientOps(connection: Connection, clientId: string, command: z.infer<typeof commandSchema>) {
+    if (command.clientId !== clientId) { this.sendSnapshot(connection, clientId, "invalid"); return }
     const state = this.state
-    const prior = state.clientHeads[connectionClientId] ?? { seq: 0, rev: 0 }
-    if (command.data.clientSeq <= prior.seq) {
-      this.sendSnapshot(connection, connectionClientId, "duplicate")
-      return
-    }
-    if (command.data.clientSeq !== prior.seq + 1) {
-      this.sendSnapshot(connection, connectionClientId, "sequence_gap")
-      return
-    }
-    if (command.data.clientRev !== state.rev) {
-      this.sendSnapshot(connection, connectionClientId, "stale_revision")
-      return
-    }
-
+    const prior = state.clientHeads[clientId] ?? { seq: 0, rev: 0 }
+    if (command.clientSeq <= prior.seq) { this.sendSnapshot(connection, clientId, "duplicate"); return }
+    if (command.clientSeq !== prior.seq + 1) { this.sendSnapshot(connection, clientId, "sequence_gap"); return }
+    if (command.clientRev !== state.rev) { this.sendSnapshot(connection, clientId, "stale_revision"); return }
     let doc: Doc = { nodes: state.nodes, order: state.order }
-    try {
-      for (const op of command.data.ops) doc = applyOp(doc, op as Op, REDUCER_CONTEXT).doc
-    } catch {
-      this.sendSnapshot(connection, connectionClientId, "invalid")
-      return
-    }
-    if (!validDocument(doc)) {
-      this.sendSnapshot(connection, connectionClientId, "invalid")
-      return
-    }
-
+    try { doc = applyOps(doc, command.ops as Op[], REDUCER_CONTEXT) } catch { this.sendSnapshot(connection, clientId, "invalid"); return }
+    if (!validDocument(doc)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     const rev = state.rev + 1
     this.setState({
-      nodes: doc.nodes,
-      order: doc.order,
-      rev,
-      clientHeads: boundClientHeads({
-        ...state.clientHeads,
-        [connectionClientId]: { seq: command.data.clientSeq, rev },
-      }),
+      ...state, nodes: doc.nodes, order: doc.order, rev,
+      clientHeads: boundClientHeads({ ...state.clientHeads, [clientId]: { seq: command.clientSeq, rev } }),
     })
-    this.broadcast(JSON.stringify({
-      type: "op",
-      ops: command.data.ops,
-      rev,
-      by: connectionClientId,
-      clientSeq: command.data.clientSeq,
-    }))
+    this.broadcast(JSON.stringify({ type: "op", ops: command.ops, rev, by: clientId, clientSeq: command.clientSeq }))
+  }
+
+  private async handleChatStart(connection: Connection, command: z.infer<typeof chatStartSchema>) {
+    const existing = this.state.agentTurns.find((turn) => turn.turnId === command.turnId)
+    if (existing) { this.sendCompleted(connection, existing); return }
+    if (this.state.pendingReview?.turnId === command.turnId) {
+      connection.send(JSON.stringify(this.pendingFrame(this.state.pendingReview)))
+      return
+    }
+    if (this.state.pendingReview) { this.sendError(connection, "turn_in_progress", "Finish the pending review first", command.turnId); return }
+    if (this.activeTurns.size) { this.sendError(connection, "turn_in_progress", "Another agent turn is already running", command.turnId); return }
+    if (command.clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas changed; retry from the current revision", command.turnId); return }
+
+    const baseRev = this.state.rev
+    const baseDoc: Doc = { nodes: this.state.nodes, order: this.state.order }
+    const model = resolveModel(command.model)
+    let draft = createServerToolDraft(baseDoc, command.selection ?? [])
+    const messages: ModelMessage[] = [{ role: "system", content: SYSTEM_PROMPT }, { role: "user", content: command.prompt }]
+    let answer = ""
+    let toolCalls = 0
+    this.activeTurns.add(command.turnId)
+    try {
+      for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+        const reply = await runSquigModel(this.env, model, messages, SERVER_TOOL_DEFINITIONS, command.turnId)
+        if (reply.content) {
+          answer += reply.content
+          connection.send(JSON.stringify({ type: "chat.delta", turnId: command.turnId, delta: reply.content }))
+        }
+        messages.push({ role: "assistant", content: reply.content || null, ...(reply.toolCalls.length ? { tool_calls: reply.toolCalls } : {}) })
+        if (!reply.toolCalls.length) break
+        toolCalls += reply.toolCalls.length
+        if (toolCalls > MAX_TOOL_CALLS) throw new ToolExecutionError("The model requested too many tools")
+        for (const call of reply.toolCalls) {
+          let args: unknown
+          try { args = JSON.parse(call.function.arguments) } catch { throw new ToolExecutionError(`Invalid arguments for ${call.function.name}`) }
+          try {
+            const executed = executeServerTool(draft, call.function.name, args, {
+              allocateId: (doc) => { let next = nanoid(8); while (doc.nodes[next]) next = nanoid(8); return next },
+              environment: { viewport: command.viewport, viewportWidth: command.viewportWidth, viewportHeight: command.viewportHeight },
+            })
+            draft = executed.draft
+            connection.send(JSON.stringify({ type: "chat.tool", turnId: command.turnId, name: call.function.name, summary: executed.outcome.summary, affected: executed.outcome.affected }))
+            messages.push({ role: "tool", tool_call_id: call.id, content: JSON.stringify(executed.outcome) })
+          } catch (error) {
+            throw new ToolExecutionError(`${call.function.name}: ${errorMessage(error)}`)
+          }
+        }
+        if (round === MAX_TOOL_ROUNDS - 1) throw new ToolExecutionError("The model did not finish within the tool limit")
+      }
+      if (this.state.rev !== baseRev) { this.sendError(connection, "stale_revision", "The canvas changed while the turn was running; nothing was committed", command.turnId); return }
+      const message = answer || (draft.ops.length ? "Prepared the requested canvas changes." : "No canvas changes were needed.")
+      if (command.review && draft.ops.length) {
+        const pending: PendingReview = {
+          turnId: command.turnId, baseRev, model, ops: draft.ops, inverseOps: compactInverseOps(draft.inverseOps),
+          affected: draft.affected, selection: draft.selection, message,
+        }
+        this.setState({ ...this.state, pendingReview: pending })
+        this.broadcast(JSON.stringify(this.pendingFrame(pending)))
+        connection.send(JSON.stringify({ type: "chat.completed", turnId: command.turnId, rev: baseRev, status: "pending", model, affected: pending.affected } satisfies ChatCompletedFrame))
+        return
+      }
+      this.commitAgentTurn(connection, {
+        turnId: command.turnId, baseRev, committedRev: baseRev + (draft.ops.length ? 1 : 0), status: "committed",
+        completion: "completed", model, inverseOps: compactInverseOps(draft.inverseOps), affected: draft.affected,
+      }, draft.doc, draft.ops, draft.selection)
+    } catch (error) {
+      this.sendError(connection, error instanceof ToolExecutionError ? "tool_error" : "model_error", errorMessage(error), command.turnId)
+    } finally {
+      this.activeTurns.delete(command.turnId)
+    }
+  }
+
+  private handleReviewAccept(connection: Connection, turnId: string, clientRev: number) {
+    const existing = this.state.agentTurns.find((turn) => turn.turnId === turnId)
+    if (existing) { this.sendCompleted(connection, existing); return }
+    const pending = this.state.pendingReview
+    if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
+    if (pending.baseRev !== this.state.rev) { this.sendError(connection, "stale_review", "The canvas changed after this review was prepared", turnId); return }
+    const doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, pending.ops, REDUCER_CONTEXT)
+    this.commitAgentTurn(connection, {
+      turnId, baseRev: pending.baseRev, committedRev: this.state.rev + 1, status: "committed", completion: "accepted",
+      model: pending.model, inverseOps: pending.inverseOps, affected: pending.affected,
+    }, doc, pending.ops, pending.selection, true)
+  }
+
+  private handleReviewReject(connection: Connection, turnId: string, clientRev: number) {
+    const existing = this.state.agentTurns.find((turn) => turn.turnId === turnId)
+    if (existing) { this.sendCompleted(connection, existing); return }
+    const pending = this.state.pendingReview
+    if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
+    const record: AgentTurnRecord = {
+      turnId, baseRev: pending.baseRev, committedRev: this.state.rev, status: "rejected", completion: "rejected",
+      model: pending.model, inverseOps: [], affected: pending.affected,
+    }
+    this.setState({ ...this.state, pendingReview: undefined, agentTurns: boundedTurns([...this.state.agentTurns, record]) })
+    this.broadcast(JSON.stringify(this.completedFrame(record)))
+  }
+
+  private handleAgentUndo(connection: Connection, turnId: string, clientRev: number) {
+    if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
+    const index = this.state.agentTurns.findIndex((turn) => turn.turnId === turnId)
+    const turn = this.state.agentTurns[index]
+    if (!turn || turn.status === "rejected") { this.sendError(connection, "not_found", "Committed agent turn not found", turnId); return }
+    if (turn.status === "undone") { this.sendCompleted(connection, turn); return }
+    if (this.state.rev !== turn.committedRev || !turn.inverseOps.length) { this.sendError(connection, "undo_conflict", "The canvas changed after this agent turn", turnId); return }
+    const doc = applyOps({ nodes: this.state.nodes, order: this.state.order }, turn.inverseOps, REDUCER_CONTEXT)
+    const rev = this.state.rev + 1
+    const undone: AgentTurnRecord = { ...turn, status: "undone", completion: "undone", committedRev: rev }
+    const turns = [...this.state.agentTurns]
+    turns[index] = undone
+    this.setState({ ...this.state, nodes: doc.nodes, order: doc.order, rev, agentTurns: turns })
+    this.broadcast(JSON.stringify({ type: "op", ops: turn.inverseOps, rev, by: `agent:${turnId}`, clientSeq: 0 }))
+    connection.send(JSON.stringify({ type: "selection.set", turnId, rev, ids: [] }))
+    this.broadcast(JSON.stringify(this.completedFrame(undone)))
+  }
+
+  private commitAgentTurn(connection: Connection, record: AgentTurnRecord, doc: Doc, ops: Op[], selection: string[], accepted = false) {
+    const state = this.state
+    const rev = record.committedRev
+    this.setState({
+      ...state, nodes: doc.nodes, order: doc.order, rev, pendingReview: undefined,
+      agentTurns: boundedTurns([...state.agentTurns, record]),
+    })
+    if (ops.length) this.broadcast(JSON.stringify({ type: "op", ops, rev, by: `agent:${record.turnId}`, clientSeq: 0 }))
+    connection.send(JSON.stringify({ type: "selection.set", turnId: record.turnId, rev, ids: selection }))
+    const completed = this.completedFrame(record)
+    if (accepted) this.broadcast(JSON.stringify(completed))
+    else connection.send(JSON.stringify(completed))
+  }
+
+  private completedFrame(turn: AgentTurnRecord): ChatCompletedFrame {
+    return { type: "chat.completed", turnId: turn.turnId, rev: turn.committedRev, status: turn.completion, model: turn.model, affected: turn.affected }
+  }
+
+  private sendCompleted(connection: Connection, turn: AgentTurnRecord) { connection.send(JSON.stringify(this.completedFrame(turn))) }
+
+  private pendingFrame(pending: PendingReview): ReviewPendingFrame {
+    return { type: "review.pending", turnId: pending.turnId, baseRev: pending.baseRev, ops: pending.ops, affected: pending.affected, message: pending.message, model: pending.model }
+  }
+
+  private sendError(connection: Connection, code: ChatErrorFrame["code"], message: string, turnId: string) {
+    connection.send(JSON.stringify({ type: "chat.error", turnId, rev: this.state.rev, code, message } satisfies ChatErrorFrame))
   }
 
   private connectionClientId(connection: Connection): string {
-    const state = connection.state as SquigConnectionState | null
-    return state?.clientId ?? "invalid-client"
+    return (connection.state as SquigConnectionState | null)?.clientId ?? "invalid-client"
   }
 
   private sendSnapshot(connection: Connection, clientId: string, reason?: SnapshotReason) {
     const state = this.state
     connection.send(JSON.stringify({
-      type: "snapshot",
-      doc: { nodes: state.nodes, order: state.order },
-      rev: state.rev,
-      acceptedClientSeq: state.clientHeads[clientId]?.seq ?? 0,
-      ...(reason ? { reason } : {}),
+      type: "snapshot", doc: { nodes: state.nodes, order: state.order }, rev: state.rev,
+      acceptedClientSeq: state.clientHeads[clientId]?.seq ?? 0, ...(reason ? { reason } : {}),
     }))
   }
 }

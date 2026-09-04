@@ -33,6 +33,8 @@ import {
   type ServerOpMessage,
   type SnapshotMessage,
 } from "./protocol"
+import { isServerChatFrame } from "./chat-protocol"
+import { handleServerChatFrame, resetChatClient, setChatRevision, setChatTransport } from "./chat-client"
 
 export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protocol"
 
@@ -596,7 +598,11 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
       return
     }
     socket = opened
-    opened.addEventListener("open", () => { if (sessionGeneration === generation) session.setTransportOpen(true) })
+    opened.addEventListener("open", () => {
+      if (sessionGeneration !== generation) return
+      session.setTransportOpen(true)
+      setChatTransport((frame) => opened.send(JSON.stringify(frame)))
+    })
     opened.addEventListener("message", (event) => {
       if (sessionGeneration !== generation || typeof event.data !== "string") return
       let message: unknown
@@ -614,13 +620,17 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
           return
         }
         setConnectedPersistenceMode(true)
+        setChatRevision((message as SnapshotMessage).rev)
         setConnectedHistoryController({ undo: () => session.undo(), redo: () => session.redo() })
         useSquig.setState({ past: [], future: [] })
         void updateIndex("save")
         void refreshIndex()
       } else if (type === "op") {
         session.handleServerOp(message as ServerOpMessage)
-        if ((message as ServerOpMessage).by === clientId) void updateIndex("save")
+        setChatRevision(session.inspect().serverRev)
+        if ((message as ServerOpMessage).by === clientId || (message as ServerOpMessage).by.startsWith("agent:")) void updateIndex("save")
+      } else if (isServerChatFrame(message)) {
+        handleServerChatFrame(message)
       }
     })
     opened.addEventListener("error", () => {
@@ -628,7 +638,10 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     })
     opened.addEventListener("close", () => {
       session.setTransportOpen(false)
-      if (socket === opened) socket = null
+      if (socket === opened) {
+        socket = null
+        setChatTransport(null)
+      }
       if (sessionGeneration === generation) setConnectedPersistenceMode(false)
       scheduleReconnect(session, sessionGeneration)
     })
@@ -649,6 +662,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
       const previousSocket = socket
       socket = null
       previousSocket?.close(1000, "Document changed")
+      resetChatClient()
       activeDocId = state.docId
       setConnectedHistoryController(null)
       core = coreFor(activeDocId)
@@ -672,6 +686,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     unsubscribeEdits()
     setConnectedHistoryController(null)
     setConnectedPersistenceMode(false)
+    resetChatClient()
     if (reconnectTimer) clearTimeout(reconnectTimer)
     for (const session of cores.values()) session.setTransportOpen(false)
     socket?.close(1000, "Page closed")

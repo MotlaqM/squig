@@ -32,6 +32,8 @@ const held = new Map<string, string>()
 
 const { ModelContextShim, executeToolByName } = await import("../lib/agent/model-context-shim.ts")
 const { registerSquigTools, V1_TOOL_NAMES } = await import("../lib/agent/tools.ts")
+const { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_NAMES } = await import("../lib/agent/server-tools.ts")
+const { applyOps } = await import("../lib/ops/invert.ts")
 const { useSquig } = await import("../lib/store.ts")
 import type { ArrowNode, DrawNode, SquigNode, TextNode } from "../lib/types.ts"
 
@@ -311,6 +313,21 @@ const registration = await registerSquigTools(
   }))
   check("failed batch leaves document untouched", docJson() === beforeDoc)
   check("failed batch leaves history and selection untouched", JSON.stringify({ past: state().past, future: state().future, selection: state().selection }) === beforeHistory)
+}
+
+// Persisted inverses survive JSON and merge adjacent patches without losing
+// the deletion markers that restore optional fields.
+{
+  const baseNode: SquigNode = { id: "inverse", type: "shape", shape: "rect", fill: "none", x: 0, y: 0, w: 40, h: 40, seed: 1 }
+  const base = { nodes: { inverse: baseNode }, order: ["inverse"] }
+  let draft = createServerToolDraft(base, ["inverse"])
+  draft = executeServerTool(draft, "flip", { ids: ["inverse"], axis: "x" }, { allocateId: () => "unused" }).draft
+  draft = executeServerTool(draft, "lock", { ids: ["inverse"] }, { allocateId: () => "unused" }).draft
+  const inverse = JSON.parse(JSON.stringify(compactInverseOps(draft.inverseOps)))
+  const restored = applyOps(draft.doc, inverse, { getDef: () => undefined, nanoid: () => "unused", seed: () => 1 })
+  check("server catalogue has exactly 24 tools", SERVER_TOOL_NAMES.length === 24 && new Set(SERVER_TOOL_NAMES).size === 24)
+  check("compact inverse retains JSON-safe deletions", JSON.stringify(inverse).includes("null"))
+  check("JSON-round-tripped compact inverse restores the document", JSON.stringify(restored) === JSON.stringify(base))
 }
 
 // A document no-op after undo must hand the complete redo branch back.

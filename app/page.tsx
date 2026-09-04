@@ -15,6 +15,7 @@ import { LinkEditor } from "@/components/chrome/link-editor"
 import { Notice } from "@/components/chrome/notice"
 import { SmallScreenNote } from "@/components/chrome/small-screen-note"
 import { ModelContextRegistrar } from "@/components/agent/model-context-registrar"
+import { AgentChatPanel } from "@/components/agent/chat-panel"
 import { kbd } from "@/lib/shortcuts"
 
 export default function Home() {
@@ -51,6 +52,7 @@ export default function Home() {
           <ZoomPill />
           <CommandHint />
           <SmallScreenNote />
+          <AgentChatPanel />
         </>
       )}
       {uiHidden && (

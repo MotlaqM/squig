@@ -84,9 +84,9 @@ pnpm dev
 
 When `NEXT_PUBLIC_SQUIG_WORKER_URL` is configured, the Worker Durable Object is
 the authoritative document store and D1 is only a drawer-metadata projection.
-Browser rename/save requests currently own the D1 row; Agent operations update
-the durable document but do not touch D1 directly. Keeping that projection
-best-effort prevents a D1 outage from rolling back an accepted document edit.
+Browser rename/save requests update that projection after human and agent
+operations. Keeping it best-effort prevents a D1 outage from rolling back an
+accepted document edit.
 Copy `.dev.vars.example` to `.dev.vars` for local Worker development; the
 committed Wrangler default is production and fails closed without an Access
 JWT whose signature, issuer, application audience, and expiry validate against
@@ -102,10 +102,25 @@ production `APP_ORIGIN`; every substantive request still requires a valid JWT.
 `ENVIRONMENT=local` additionally accepts the equivalent `localhost` and
 `127.0.0.1` spelling at the configured port.
 
-No environment variables, no database, no accounts — documents live in the
-browser's own storage. `pnpm test` type-checks and runs the geometry,
-selection and clipboard suites; `pnpm lint` and `pnpm build` are the other two
-worth running before you push.
+The sparkle button opens the minimal agent panel. Its default model is Workers
+AI `@cf/zai-org/glm-5.3-flash`; Kimi K2.6 and Claude Sonnet 5 are selectable.
+For a deterministic, non-billable local loop, apply the local D1 migration and
+run Wrangler with the fake model before starting Next.js in another terminal:
+
+```bash
+pnpm exec wrangler d1 migrations apply DOCS_DB --local
+pnpm exec wrangler dev --local --var ENVIRONMENT:local --var SQUIG_FAKE_MODEL:true
+pnpm dev
+```
+
+`pnpm test:integration` runs the same fake model through local Wrangler and
+checks atomic multi-tool turns, review, undo, requester-only selection, and the
+seven-node landing-page fixture. It does not call a billable model.
+
+Without a Worker URL, documents continue to live in the browser's own storage.
+`pnpm test` type-checks and runs the geometry, selection, clipboard, agent, and
+sync suites; `pnpm lint` and `pnpm build` are the other two worth running before
+you push.
 
 ## How it's put together
 
