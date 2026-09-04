@@ -29,6 +29,11 @@
   addEventListener() {},
   removeEventListener() {},
 }
+;(globalThis as { document?: unknown }).document = {
+  addEventListener() {},
+  removeEventListener() {},
+  documentElement: { style: { setProperty() {} } },
+}
 const held = new Map<string, string>()
 ;(globalThis as { localStorage?: unknown }).localStorage = {
   getItem: (k: string) => held.get(k) ?? null,
@@ -55,6 +60,7 @@ function reset() {
     nodes: {},
     order: [],
     selection: [],
+    agentSelection: [],
     selectionGroupId: null,
     clipboard: [],
     past: [],
@@ -220,6 +226,92 @@ const docJson = () => JSON.stringify({ nodes: s().nodes, order: s().order })
   })
   check("a file written before any of this still opens", s().loadDoc(legacy) === true)
   check("…with its picture", (s().nodes.pic1 as ImageNode)?.src === srcA)
+}
+
+// -- an agent cursor belongs to one document -------------------------------
+
+{
+  // Give every document the same locked id. A leaked agent cursor would then
+  // have a real node to attach to after the switch, which is exactly the stale
+  // outline a person would see on the canvas rather than a harmless missing id.
+  s().saveNow()
+  held.clear()
+  useSquig.setState({
+    docId: "cursor-source",
+    fileName: "cursor source",
+    files: [],
+    nodes: {},
+    order: [],
+    selection: [],
+    agentSelection: [],
+    selectionGroupId: null,
+    editingId: null,
+    croppingId: null,
+    past: [],
+    future: [],
+    stale: false,
+  })
+
+  const cursorId = "same-locked-layer"
+  const addLockedCollision = (x: number) => s().addNode({
+    id: cursorId,
+    seed: 17,
+    type: "shape",
+    shape: "rect",
+    fill: "none",
+    locked: true,
+    x,
+    y: 20,
+    w: 80,
+    h: 50,
+  } as SquigNode, { select: false })
+  const cursorCanRender = () => s().agentSelection.some((id) => !!s().nodes[id]?.locked)
+
+  addLockedCollision(20)
+  s().saveNow()
+  const sourceId = s().docId
+  const exportedSource = s().serialize()
+  s().setAgentSelection([cursorId])
+  check("document-bound cursor fixture is visible", cursorCanRender())
+
+  s().newFile()
+  addLockedCollision(120)
+  check("creating another document drops the old agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+  s().saveNow()
+  const otherId = s().docId
+
+  s().setAgentSelection([cursorId])
+  s().openFile(sourceId)
+  check("opening another document drops the old agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+
+  s().setAgentSelection([cursorId])
+  s().openFile(otherId)
+  check("reopening a document does not restore its old agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+
+  s().setAgentSelection([cursorId])
+  s().hydrate()
+  check("hydrating the active document drops the pre-hydration agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+
+  const deletedId = s().docId
+  s().setAgentSelection([cursorId])
+  s().deleteFile(deletedId)
+  check("deleting the open document drops its agent cursor before choosing the next", s().docId !== deletedId && s().agentSelection.length === 0 && !cursorCanRender())
+
+  const beforeImportId = s().docId
+  s().setAgentSelection([cursorId])
+  check("importing the fixture succeeds", s().loadDoc(exportedSource) === true)
+  const importedId = s().docId
+  check("importing as a new document drops the previous agent cursor", importedId !== beforeImportId && s().agentSelection.length === 0 && !cursorCanRender())
+
+  s().setAgentSelection([cursorId])
+  s().openFile(beforeImportId)
+  check("leaving an import drops its agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+  s().openFile(importedId)
+  check("reopening the import cannot revive its old agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
+
+  s().setAgentSelection([cursorId])
+  s().clearCanvas()
+  check("clearing a document drops its agent cursor", s().agentSelection.length === 0 && !cursorCanRender())
 }
 
 // -- sameDoc still knows a no-op when it sees one ---------------------------

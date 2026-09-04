@@ -3,6 +3,8 @@ CLOUDFLARE_ACCOUNT_ID=be8e1a02e385a312f00a0042fc31a1ca
 D1_DATABASE_ID=6764c491-1611-4ae2-aaf4-16a35e9490b5
 AI_GATEWAY_ID=squig-webmcp
 ENVIRONMENT=local
+# Deterministic local-only chat loop; set false to use the configured AI binding.
+SQUIG_FAKE_MODEL=true
 
 # Production requires both non-secret values before any request can authenticate.
 # ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com

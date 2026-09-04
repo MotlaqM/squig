@@ -33,6 +33,8 @@ import {
   type ServerOpMessage,
   type SnapshotMessage,
 } from "./protocol"
+import { isReviewCapability, isReviewIdentityFrame, isServerChatFrame, type ReviewResumeFrame } from "./chat-protocol"
+import { handleServerChatFrame, resetChatClient, setChatRevision, setChatTransport } from "./chat-client"
 
 export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protocol"
 
@@ -500,8 +502,35 @@ export class SquigSyncCore {
   }
 }
 
-/** A new JavaScript page realm gets a new id; reconnects reuse the captured value. */
+/** Allocate an id for a genuinely new page/tab identity. */
 export function createPageClientId(): string { return crypto.randomUUID() }
+const REVIEW_OWNER_STORAGE_PREFIX = "squig:agent:review-owner:v1:"
+
+export function reviewOwnerStorageKey(docId: string): string {
+  return `${REVIEW_OWNER_STORAGE_PREFIX}${encodeURIComponent(docId)}`
+}
+
+/** Read only a server-issued review capability; sync operation ids are never persisted. */
+export function loadReviewOwnerId(docId: string, storage?: Pick<Storage, "getItem">): string | null {
+  if (!storage) return null
+  try {
+    const existing = storage.getItem(reviewOwnerStorageKey(docId))
+    return isReviewCapability(existing) ? existing : null
+  } catch {
+    return null
+  }
+}
+
+export function saveReviewOwnerId(docId: string, reviewOwnerId: string, storage?: Pick<Storage, "setItem">): boolean {
+  if (!storage || !isReviewCapability(reviewOwnerId)) return false
+  try {
+    storage.setItem(reviewOwnerStorageKey(docId), reviewOwnerId)
+    return true
+  } catch {
+    return false
+  }
+}
+
 const PAGE_CLIENT_ID = createPageClientId()
 
 function configuredWorkerUrl(): string | null {
@@ -525,6 +554,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
   if (!workerUrl) return () => undefined
 
   const clientId = options.clientId ?? PAGE_CLIENT_ID
+  const reviewOwnerStorage = typeof sessionStorage === "undefined" ? undefined : sessionStorage
   let disposed = false
   let socket: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -596,7 +626,13 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
       return
     }
     socket = opened
-    opened.addEventListener("open", () => { if (sessionGeneration === generation) session.setTransportOpen(true) })
+    opened.addEventListener("open", () => {
+      if (sessionGeneration !== generation) return
+      const reviewOwnerId = loadReviewOwnerId(activeDocId, reviewOwnerStorage)
+      opened.send(JSON.stringify({ type: "review.resume", ...(reviewOwnerId ? { reviewOwnerId } : {}) } satisfies ReviewResumeFrame))
+      session.setTransportOpen(true)
+      setChatTransport((frame) => opened.send(JSON.stringify(frame)))
+    })
     opened.addEventListener("message", (event) => {
       if (sessionGeneration !== generation || typeof event.data !== "string") return
       let message: unknown
@@ -607,20 +643,26 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
         opened.close(1002, "Unexpected framework protocol")
         return
       }
-      if (type === "snapshot") {
+      if (isReviewIdentityFrame(message)) {
+        saveReviewOwnerId(activeDocId, message.reviewOwnerId, reviewOwnerStorage)
+      } else if (type === "snapshot") {
         if (!session.handleSnapshot(message as SnapshotMessage)) {
           if (sessionGeneration === generation) setConnectedPersistenceMode(false)
           opened.close(1002, "Invalid snapshot")
           return
         }
         setConnectedPersistenceMode(true)
+        setChatRevision((message as SnapshotMessage).rev)
         setConnectedHistoryController({ undo: () => session.undo(), redo: () => session.redo() })
         useSquig.setState({ past: [], future: [] })
         void updateIndex("save")
         void refreshIndex()
       } else if (type === "op") {
         session.handleServerOp(message as ServerOpMessage)
-        if ((message as ServerOpMessage).by === clientId) void updateIndex("save")
+        setChatRevision(session.inspect().serverRev)
+        if ((message as ServerOpMessage).by === clientId || (message as ServerOpMessage).by.startsWith("agent:")) void updateIndex("save")
+      } else if (isServerChatFrame(message)) {
+        handleServerChatFrame(message)
       }
     })
     opened.addEventListener("error", () => {
@@ -628,7 +670,10 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     })
     opened.addEventListener("close", () => {
       session.setTransportOpen(false)
-      if (socket === opened) socket = null
+      if (socket === opened) {
+        socket = null
+        setChatTransport(null)
+      }
       if (sessionGeneration === generation) setConnectedPersistenceMode(false)
       scheduleReconnect(session, sessionGeneration)
     })
@@ -649,6 +694,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
       const previousSocket = socket
       socket = null
       previousSocket?.close(1000, "Document changed")
+      resetChatClient()
       activeDocId = state.docId
       setConnectedHistoryController(null)
       core = coreFor(activeDocId)
@@ -672,6 +718,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     unsubscribeEdits()
     setConnectedHistoryController(null)
     setConnectedPersistenceMode(false)
+    resetChatClient()
     if (reconnectTimer) clearTimeout(reconnectTimer)
     for (const session of cores.values()) session.setTransportOpen(false)
     socket?.close(1000, "Page closed")

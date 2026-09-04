@@ -96,6 +96,8 @@ interface SquigState {
   nodes: Record<string, SquigNode>
   order: string[]
   selection: string[]
+  /** Locked nodes highlighted by the agent, never consumed by human commands. */
+  agentSelection: string[]
   /** the exact group represented by `selection`; needed once groups nest */
   selectionGroupId: string | null
   viewport: Viewport
@@ -179,6 +181,8 @@ interface SquigState {
   setGrid: (on: boolean) => void
   setViewport: (v: Viewport) => void
   setSelection: (ids: string[], groupId?: string | null) => void
+  /** Select agent-affected nodes even when the turn just locked them. */
+  setAgentSelection: (ids: string[]) => void
   setCommandOpen: (open: boolean) => void
   setContextMenu: (m: ContextMenuState | null) => void
   setRenamingFile: (on: boolean) => void
@@ -353,7 +357,8 @@ export function applyAuthoritativeDocument(doc: DocFields): void {
     useSquig.setState({
       nodes: doc.nodes,
       order: doc.order,
-      selection: state.selection.filter((nodeId) => doc.nodes[nodeId]),
+      selection: selectable(state.selection, doc.nodes),
+      agentSelection: state.agentSelection.filter((nodeId) => doc.nodes[nodeId]?.locked),
       selectionGroupId: null,
       stale: false,
     })
@@ -831,6 +836,9 @@ function adoptDoc(get: () => SquigState) {
     order: clean.order,
     // whatever of the selection survived the other tab's edit, in document order
     selection: selectable(clean.order.filter((id) => held.has(id)), clean.nodes),
+    // agent feedback is transient too, but this is the same document catching
+    // up rather than a switch: keep only outlines that still name locked nodes.
+    agentSelection: s.agentSelection.filter((id) => clean.nodes[id]?.locked),
     selectionGroupId: null,
     croppingId: s.croppingId && clean.nodes[s.croppingId] ? s.croppingId : null,
     past: [],
@@ -922,6 +930,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   nodes: {},
   order: [],
   selection: [],
+  agentSelection: [],
   selectionGroupId: null,
   viewport: { x: 0, y: 0, zoom: 1 },
   tool: "select",
@@ -1060,6 +1069,21 @@ export const useSquig = create<SquigState>((set, get) => ({
       // path doesn't have to say so; see the note at the foot of this file,
       // which says it for every path.
       return { selection: next, selectionGroupId: nextGroup }
+    })
+  },
+  setAgentSelection: (ids) => {
+    set((s) => {
+      const want = new Set(ids.filter((id) => !!s.nodes[id]))
+      const next = selectable(s.order.filter((id) => want.has(id)), s.nodes)
+      const agentSelection = s.order.filter((id) => want.has(id) && s.nodes[id]?.locked)
+      if (
+        s.selectionGroupId === null &&
+        next.length === s.selection.length &&
+        next.every((id, i) => s.selection[i] === id) &&
+        agentSelection.length === s.agentSelection.length &&
+        agentSelection.every((id, i) => s.agentSelection[i] === id)
+      ) return s
+      return { selection: next, agentSelection, selectionGroupId: null }
     })
   },
   setCommandOpen: (open) =>
@@ -1475,6 +1499,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       nodes: clean.nodes,
       order: clean.order,
       selection: [],
+      agentSelection: [],
       selectionGroupId: null,
       files: mergedFiles(files),
       contextRow: prefs.contextRow,
@@ -1491,7 +1516,7 @@ export const useSquig = create<SquigState>((set, get) => ({
 
   // clearing a canvas that is already clear is the emptiest edit there is
   clearCanvas: () => {
-    get().edit(() => set({ nodes: {}, order: [], selection: [], selectionGroupId: null, editingId: null, croppingId: null }))
+    get().edit(() => set({ nodes: {}, order: [], selection: [], agentSelection: [], selectionGroupId: null, editingId: null, croppingId: null }))
   },
 
   // -- groups ---------------------------------------------------------------
@@ -1894,6 +1919,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       nodes: {},
       order: [],
       selection: [],
+      agentSelection: [],
       selectionGroupId: null,
       croppingId: null,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -1922,6 +1948,7 @@ export const useSquig = create<SquigState>((set, get) => ({
           nodes: {},
           order: [],
           selection: [],
+          agentSelection: [],
           selectionGroupId: null,
           croppingId: null,
           viewport: { x: 0, y: 0, zoom: 1 },
@@ -1945,6 +1972,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       nodes: clean.nodes,
       order: clean.order,
       selection: [],
+      agentSelection: [],
       selectionGroupId: null,
       croppingId: null,
       viewport: { x: 0, y: 0, zoom: 1 },
@@ -1978,6 +2006,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       nodes: {},
       order: [],
       selection: [],
+      agentSelection: [],
       selectionGroupId: null,
       croppingId: null,
       past: [],
@@ -2021,6 +2050,7 @@ export const useSquig = create<SquigState>((set, get) => ({
         nodes: clean.nodes,
         order: clean.order,
         selection: [],
+        agentSelection: [],
         selectionGroupId: null,
         croppingId: null,
         renamingFile: false,

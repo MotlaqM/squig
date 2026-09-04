@@ -5,6 +5,9 @@
   "compatibility_date": "2026-09-04",
   "compatibility_flags": ["nodejs_compat"],
   "account_id": "be8e1a02e385a312f00a0042fc31a1ca",
+  "ai": {
+    "binding": "AI"
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -29,6 +32,7 @@
   ],
   "vars": {
     "AI_GATEWAY_ID": "squig-webmcp",
+    "SQUIG_FAKE_MODEL": "false",
     "ACCESS_APPLICATION_AUD": "",
     "ACCESS_TEAM_DOMAIN": "",
     "APP_ORIGIN": "http://localhost:3000",

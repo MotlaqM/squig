@@ -48,7 +48,9 @@ function patchNodes(
     if (!current) continue
     const candidate = { ...current, ...patch, id: current.id, type: current.type } as SquigNode
     for (const [key, value] of Object.entries(patch)) {
-      if (value === undefined) delete (candidate as unknown as Record<string, unknown>)[key]
+      // `null` is the wire-safe form of an undefined deletion in persisted
+      // inverse operations. No Squig node field uses top-level null.
+      if (value === undefined || value === null) delete (candidate as unknown as Record<string, unknown>)[key]
     }
     if (sameValue(current, candidate)) continue
     if (next === nodes) next = { ...nodes }
