@@ -141,11 +141,16 @@ interface Draft {
 }
 
 interface ToolOutcome {
+  content: { type: "text"; text: string }[]
   affected: string[]
   summary: string
   id?: string
   ids?: string[]
   data?: unknown
+}
+
+function outcome(affected: string[], summary: string, extra: Partial<Omit<ToolOutcome, "content" | "affected" | "summary">> = {}): ToolOutcome {
+  return { content: [{ type: "text", text: summary }], affected, summary, ...extra }
 }
 
 interface ToolCall {
@@ -222,7 +227,7 @@ function apply(draft: Draft, op: Op, selection?: string[]): ToolOutcome {
   draft.doc = result.doc
   if (selection) draft.selection = selection
   else draft.selection = draft.selection.filter((id) => !!result.doc.nodes[id] && !result.doc.nodes[id].locked)
-  return { affected: result.affected, summary: result.summary }
+  return outcome(result.affected, result.summary)
 }
 
 function makeId(doc: Doc): string {
@@ -403,6 +408,9 @@ function compileMutation(name: V1ToolName, rawInput: UnknownRecord, draft: Draft
         const node = draft.doc.nodes[id]
         if (node.type === "component" || node.type === "image") throw new TypeError(`${node.type} nodes do not expose set_style`)
         if (fill !== undefined && node.type !== "shape") throw new TypeError("fill applies only to shapes")
+        if ((stroke !== undefined || dashed !== undefined) && node.type === "text") {
+          throw new TypeError("stroke and dashed apply only to outlined nodes")
+        }
         patches[id] = {
           ...(ink !== undefined ? { ink } : {}),
           ...(stroke !== undefined ? { stroke } : {}),
@@ -419,15 +427,33 @@ function compileMutation(name: V1ToolName, rawInput: UnknownRecord, draft: Draft
       const url = text(rawInput.url, "url").trim()
       return apply(draft, { t: "updateMany", patches: Object.fromEntries(ids.map((id) => [id, { link: url || undefined }])) })
     }
-    case "remove": return apply(draft, { t: "remove", ids: resolveIds(rawInput.ids, draft) })
-    case "align": return apply(draft, { t: "align", ids: resolveIds(rawInput.ids, draft, { min: 2 }), edge: choice(rawInput.edge, ["left", "hcenter", "right", "top", "vcenter", "bottom"] as const, "edge") })
-    case "distribute": return apply(draft, { t: "distribute", ids: resolveIds(rawInput.ids, draft, { min: 3 }), axis: choice(rawInput.axis, ["h", "v"] as const, "axis") })
-    case "reorder": return apply(draft, { t: "reorder", ids: resolveIds(rawInput.ids, draft), to: choice(rawInput.to, ["front", "back", "forward", "backward"] as const, "to") })
-    case "group": return apply(draft, { t: "group", ids: resolveIds(rawInput.ids, draft, { min: 2 }), groupId: makeId(draft.doc) })
-    case "ungroup": return apply(draft, { t: "ungroup", ids: resolveIds(rawInput.ids, draft) })
-    case "flip": return apply(draft, { t: "flip", ids: resolveIds(rawInput.ids, draft), axis: choice(rawInput.axis, ["x", "y"] as const, "axis") })
-    case "lock": return apply(draft, { t: "lock", ids: resolveIds(rawInput.ids, draft), locked: true })
-    case "unlock": return apply(draft, { t: "lock", ids: resolveIds(rawInput.ids, draft, { allowLocked: true }), locked: false })
+    case "remove":
+      exact(rawInput, ["ids"])
+      return apply(draft, { t: "remove", ids: resolveIds(rawInput.ids, draft) })
+    case "align":
+      exact(rawInput, ["ids", "edge"])
+      return apply(draft, { t: "align", ids: resolveIds(rawInput.ids, draft, { min: 2 }), edge: choice(rawInput.edge, ["left", "hcenter", "right", "top", "vcenter", "bottom"] as const, "edge") })
+    case "distribute":
+      exact(rawInput, ["ids", "axis"])
+      return apply(draft, { t: "distribute", ids: resolveIds(rawInput.ids, draft, { min: 3 }), axis: choice(rawInput.axis, ["h", "v"] as const, "axis") })
+    case "reorder":
+      exact(rawInput, ["ids", "to"])
+      return apply(draft, { t: "reorder", ids: resolveIds(rawInput.ids, draft), to: choice(rawInput.to, ["front", "back", "forward", "backward"] as const, "to") })
+    case "group":
+      exact(rawInput, ["ids"])
+      return apply(draft, { t: "group", ids: resolveIds(rawInput.ids, draft, { min: 2 }), groupId: makeId(draft.doc) })
+    case "ungroup":
+      exact(rawInput, ["ids"])
+      return apply(draft, { t: "ungroup", ids: resolveIds(rawInput.ids, draft) })
+    case "flip":
+      exact(rawInput, ["ids", "axis"])
+      return apply(draft, { t: "flip", ids: resolveIds(rawInput.ids, draft), axis: choice(rawInput.axis, ["x", "y"] as const, "axis") })
+    case "lock":
+      exact(rawInput, ["ids"])
+      return apply(draft, { t: "lock", ids: resolveIds(rawInput.ids, draft), locked: true })
+    case "unlock":
+      exact(rawInput, ["ids"])
+      return apply(draft, { t: "lock", ids: resolveIds(rawInput.ids, draft, { allowLocked: true }), locked: false })
     default:
       throw new TypeError(`${name} is not a document mutation`)
   }
@@ -502,18 +528,14 @@ function runBatch(store: SquigStore, input: UnknownRecord): ToolOutcome {
     if (call.name === "select") {
       exact(call.arguments ?? {}, ["ids"])
       draft.selection = resolveIds(call.arguments?.ids, draft)
-      outputs.push({ affected: [], summary: `select: ${draft.selection.length} nodes`, ids: [...draft.selection] })
+      outputs.push(outcome([], `select: ${draft.selection.length} nodes`, { ids: [...draft.selection] }))
     } else {
       outputs.push(compileMutation(call.name, call.arguments ?? {}, draft))
     }
   }
 
   commitDraft(store, before, draft)
-  return {
-    affected: affectedAcross(before.doc, draft.doc),
-    summary: `batch: ${outputs.length} calls`,
-    data: outputs,
-  }
+  return outcome(affectedAcross(before.doc, draft.doc), `batch: ${outputs.length} calls`, { data: outputs })
 }
 
 function affectedAcross(before: Doc, after: Doc): string[] {
@@ -566,7 +588,7 @@ function executeStatic(store: SquigStore, ownerWindow: Window, name: Exclude<V1T
       const draft = { doc: currentDoc(store), selection: [...state.selection] }
       const ids = resolveIds(input.ids, draft)
       state.setSelection(ids)
-      return { affected: [], summary: `select: ${ids.length} nodes`, ids }
+      return outcome([], `select: ${ids.length} nodes`, { ids })
     }
     case "reveal": {
       exact(input, ["ids"])
@@ -577,16 +599,16 @@ function executeStatic(store: SquigStore, ownerWindow: Window, name: Exclude<V1T
       const reveal = revealViewport(state.viewport, box, ownerWindow.innerWidth, ownerWindow.innerHeight)
       if (reveal.kind === "pan") state.setViewport(reveal.viewport)
       else if (reveal.kind === "fit") state.setViewport(fitViewport(box, ownerWindow.innerWidth, ownerWindow.innerHeight).viewport)
-      return { affected: [], summary: `reveal: ${reveal.kind}`, ids }
+      return outcome([], `reveal: ${reveal.kind}`, { ids })
     }
     case "undo":
       exact(input, [])
       state.undo()
-      return { affected: [], summary: "undo" }
+      return outcome([], "undo")
     case "redo":
       exact(input, [])
       state.redo()
-      return { affected: [], summary: "redo" }
+      return outcome([], "redo")
     case "batch": return runBatch(store, input)
     default: throw new RangeError(`Unknown static tool: ${name}`)
   }
@@ -695,6 +717,9 @@ export async function registerSquigTools(
     },
   }
 }
+
+/** Conventional export name used by tests and small host integrations. */
+export const registerTools = registerSquigTools
 
 /** Catalogue guard: all 28 bullets in brief section 5, even though one is dynamic. */
 export function assertV1Catalogue(): void {

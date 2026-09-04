@@ -129,6 +129,7 @@ const registration = await registerSquigTools(
   const beforeSteps = state().past.length
   const result = await execute("insert_component", { kind: "button", x: 100, y: 100 })
   const id = result.id as string
+  check("mutations return the standard text content envelope", result.content?.[0]?.type === "text" && result.content[0].text === result.summary)
   check("insert_component adds one node", state().order.length === 1 && state().nodes[id]?.type === "component")
   check("insert_component honors coordinates", state().nodes[id]?.x === 100 && state().nodes[id]?.y === 100)
   check("insert_component selects its node", state().selection.length === 1 && state().selection[0] === id)
