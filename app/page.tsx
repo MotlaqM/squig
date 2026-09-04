@@ -14,6 +14,7 @@ import { ShortcutsSheet } from "@/components/chrome/shortcuts-sheet"
 import { LinkEditor } from "@/components/chrome/link-editor"
 import { Notice } from "@/components/chrome/notice"
 import { SmallScreenNote } from "@/components/chrome/small-screen-note"
+import { ModelContextRegistrar } from "@/components/agent/model-context-registrar"
 import { kbd } from "@/lib/shortcuts"
 
 export default function Home() {
@@ -37,6 +38,7 @@ export default function Home() {
 
   return (
     <main className="relative h-full">
+      <ModelContextRegistrar />
       <Canvas />
       {/* ⌘\ clears the room — the canvas and what you've selected, nothing else */}
       {!uiHidden && (
