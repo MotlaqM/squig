@@ -4,5 +4,8 @@ D1_DATABASE_ID=6764c491-1611-4ae2-aaf4-16a35e9490b5
 AI_GATEWAY_ID=squig-webmcp
 ENVIRONMENT=local
 
-# Leave Access unset until the exact allowed emails and public hostname are known.
+# Production requires both non-secret values before any request can authenticate.
+# ACCESS_TEAM_DOMAIN=https://<team-name>.cloudflareaccess.com
+# ACCESS_APPLICATION_AUD=<application-audience-tag>
+# Leave the policy unset until the exact allowed emails and public hostname are known.
 # ACCESS_ALLOWED_EMAILS=

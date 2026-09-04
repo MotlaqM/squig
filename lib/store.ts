@@ -291,12 +291,14 @@ let connectedPersistence = false
 let authoritativeDocumentUpdate = false
 
 type DocumentEditEvent =
-  | { type: "commit"; before: DocFields; after: DocFields }
-  | { type: "cancel"; before: DocFields }
+  | { type: "commit"; docId: string; before: DocFields; after: DocFields }
+  | { type: "cancel"; docId: string; before: DocFields }
 
 const documentEditListeners = new Set<(event: DocumentEditEvent) => void>()
-let documentEdit: { before: DocFields; past: DocSnapshot[]; future: DocSnapshot[] } | null = null
+let documentEdit: { docId: string; before: DocFields; past: DocSnapshot[]; future: DocSnapshot[] } | null = null
 let documentEditTimer: ReturnType<typeof setTimeout> | null = null
+
+export const DOCUMENT_EDIT_FALLBACK_MS = 250
 
 export function subscribeDocumentEdits(listener: (event: DocumentEditEvent) => void): () => void {
   documentEditListeners.add(listener)
@@ -317,6 +319,10 @@ export function setConnectedPersistenceMode(connected: boolean): void {
     const local = listFiles().find((file) => file.id === useSquig.getState().docId)
     seen = local?.updatedAt ?? null
   }
+}
+
+export function isConnectedPersistenceMode(): boolean {
+  return connectedPersistence
 }
 
 function mergedFiles(local: readonly FileMeta[]): FileMeta[] {
@@ -462,6 +468,7 @@ function sameDoc(a: DocFields, b: DocFields): boolean {
 function beginDocumentEdit(state: SquigState): boolean {
   if (documentEdit) return false
   documentEdit = {
+    docId: state.docId,
     before: { nodes: state.nodes, order: state.order },
     past: state.past,
     future: state.future,
@@ -483,7 +490,7 @@ function deferDocumentEdit(get: () => SquigState): void {
   documentEditTimer = setTimeout(() => {
     documentEditTimer = null
     finishDocumentEdit(get)
-  }, 1_100)
+  }, DOCUMENT_EDIT_FALLBACK_MS)
 }
 
 function finishDocumentEdit(get: () => SquigState): boolean {
@@ -491,6 +498,11 @@ function finishDocumentEdit(get: () => SquigState): boolean {
   if (!active) return false
   clearDocumentEditTimer()
   const state = get()
+  if (state.docId !== active.docId) {
+    documentEdit = null
+    for (const listener of documentEditListeners) listener({ type: "cancel", docId: active.docId, before: active.before })
+    return false
+  }
   const after = { nodes: state.nodes, order: state.order }
   documentEdit = null
   if (sameDoc(active.before, after)) {
@@ -498,7 +510,7 @@ function finishDocumentEdit(get: () => SquigState): boolean {
     return false
   }
   stampSelAfter(state.past, state.selection, state.selectionGroupId)
-  for (const listener of documentEditListeners) listener({ type: "commit", before: active.before, after })
+  for (const listener of documentEditListeners) listener({ type: "commit", docId: active.docId, before: active.before, after })
   return true
 }
 
@@ -507,7 +519,7 @@ function cancelDocumentEdit(): void {
   if (!active) return
   clearDocumentEditTimer()
   documentEdit = null
-  for (const listener of documentEditListeners) listener({ type: "cancel", before: active.before })
+  for (const listener of documentEditListeners) listener({ type: "cancel", docId: active.docId, before: active.before })
 }
 
 /**
@@ -1386,11 +1398,11 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   undo: () => {
+    finishDocumentEdit(get)
     if (connectedHistoryController) {
       connectedHistoryController.undo()
       return
     }
-    finishDocumentEdit(get)
     const { past } = get()
     if (!past.length) return
     set((s) => {
@@ -1421,11 +1433,11 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   redo: () => {
+    finishDocumentEdit(get)
     if (connectedHistoryController) {
       connectedHistoryController.redo()
       return
     }
-    finishDocumentEdit(get)
     const { future } = get()
     if (!future.length) return
     set((s) => {
@@ -1447,6 +1459,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   hydrate: () => {
+    finishDocumentEdit(get)
     migrateLegacyDoc(() => nanoid(8))
     const prefs = loadPrefs()
     const files = listFiles()
@@ -1872,6 +1885,7 @@ export const useSquig = create<SquigState>((set, get) => ({
 
   newFile: () => {
     // the file you were on keeps its place in the drawer — this is a new one
+    finishDocumentEdit(get)
     flushSave(get)
     set({
       docId: nanoid(8),
@@ -1895,6 +1909,7 @@ export const useSquig = create<SquigState>((set, get) => ({
 
   openFile: (id) => {
     if (id === get().docId) return
+    finishDocumentEdit(get)
     flushSave(get)
     const doc = readFile(id)
     if (!doc) {
@@ -1950,6 +1965,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   deleteFile: (id) => {
+    if (id === get().docId) finishDocumentEdit(get)
     const files = dropFile(id)
     set({ files: mergedFiles(files) })
     if (id !== get().docId) return
@@ -1996,6 +2012,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       if (Object.keys(doc.nodes).length && !clean.order.length) return false
       // an opened file joins the drawer as its own document, so importing
       // never writes over whatever was on the canvas
+      finishDocumentEdit(get)
       flushSave(get)
       set({
         docId: nanoid(8),

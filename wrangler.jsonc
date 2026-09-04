@@ -29,6 +29,8 @@
   ],
   "vars": {
     "AI_GATEWAY_ID": "squig-webmcp",
+    "ACCESS_APPLICATION_AUD": "",
+    "ACCESS_TEAM_DOMAIN": "",
     "APP_ORIGIN": "http://localhost:3000",
     "ENVIRONMENT": "production"
   },

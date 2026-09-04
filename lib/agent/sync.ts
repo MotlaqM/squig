@@ -6,6 +6,7 @@ import { seedFromId } from "../ops/context"
 import { invert } from "../ops/invert"
 import type { Doc, Op, OpContext } from "../ops/types"
 import { sameValue } from "../ops/value"
+import { validDocument } from "./validate"
 import {
   applyAuthoritativeDocument,
   isAuthoritativeDocumentUpdate,
@@ -30,6 +31,7 @@ export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protoc
 
 const LOCAL_WORKER_URL = "http://127.0.0.1:8787"
 export const MAX_CONNECTED_HISTORY = 100
+export const MAX_QUEUED_HISTORY_ACTIONS = 100
 
 const CLIENT_CONTEXT: OpContext = {
   getDef: () => undefined,
@@ -39,6 +41,7 @@ const CLIENT_CONTEXT: OpContext = {
 
 interface PendingCommand { ops: Op[]; clientSeq: number; blocked: boolean }
 interface HistoryEntry { forwardOps: Op[]; inverseOps: Op[] }
+type HistoryAction = "undo" | "redo"
 
 export interface SyncError {
   code: "command_too_large" | "server_rejected"
@@ -140,6 +143,15 @@ function inverseBatch(forwardOps: readonly Op[], docBefore: Doc): Op[] {
 
 function empty(doc: Doc): boolean { return doc.order.length === 0 && Object.keys(doc.nodes).length === 0 }
 
+export function isSnapshotMessage(value: unknown): value is SnapshotMessage {
+  if (!value || typeof value !== "object") return false
+  const message = value as Partial<SnapshotMessage>
+  return message.type === "snapshot" &&
+    Number.isInteger(message.rev) && (message.rev ?? -1) >= 0 &&
+    Number.isInteger(message.acceptedClientSeq) && (message.acceptedClientSeq ?? -1) >= 0 &&
+    validDocument(message.doc)
+}
+
 /** Split reducer batches without changing the meaning of individual operations. */
 export function transportOps(ops: readonly Op[]): Op[] {
   return cloneWire(ops).flatMap((op): Op[] => {
@@ -203,7 +215,7 @@ export class SquigSyncCore {
   private history: HistoryEntry[] = []
   private redoHistory: HistoryEntry[] = []
   private preSnapshotGroups: Op[][] = []
-  private undoRequested = false
+  private historyRequests: HistoryAction[] = []
   private ready = false
   private transportOpen = false
   private paused = false
@@ -224,7 +236,8 @@ export class SquigSyncCore {
     else this.flush()
   }
 
-  handleSnapshot(message: SnapshotMessage) {
+  handleSnapshot(message: SnapshotMessage): boolean {
+    if (!isSnapshotMessage(message)) return false
     const first = !this.ready
     this.ready = true
     this.baseDoc = cloneWire(message.doc)
@@ -237,12 +250,28 @@ export class SquigSyncCore {
       this.pending = []
       this.nextClientSeq = message.acceptedClientSeq + 1
       this.visibleDoc = cloneWire(message.doc)
-      if (message.rev === 0 && empty(message.doc) && !empty(this.initialDoc)) this.enqueue(diffDocs(message.doc, this.initialDoc))
-      for (const ops of localGroups) this.enqueue(ops)
+      let rebasedDoc = cloneWire(message.doc)
+      if (message.rev === 0 && empty(message.doc) && !empty(this.initialDoc)) {
+        const bootstrap = diffDocs(message.doc, this.initialDoc)
+        this.enqueue(bootstrap)
+        rebasedDoc = applyOps(rebasedDoc, bootstrap)
+      }
+      const rebasedHistory: HistoryEntry[] = []
+      for (const ops of localGroups) {
+        const next = applyOps(rebasedDoc, ops)
+        if (!sameValue(rebasedDoc, next)) {
+          rebasedHistory.push({ forwardOps: ops, inverseOps: inverseBatch(ops, rebasedDoc) })
+          this.enqueue(ops)
+          rebasedDoc = next
+        }
+      }
+      this.history = rebasedHistory.slice(-MAX_CONNECTED_HISTORY)
+      this.redoHistory = []
       this.rebuildVisible()
       this.present()
+      this.drainHistoryRequests()
       this.flush()
-      return
+      return true
     }
 
     this.pending = this.pending.filter((command) => command.clientSeq > message.acceptedClientSeq)
@@ -252,7 +281,9 @@ export class SquigSyncCore {
       this.fail({ code: "server_rejected", message: "The server rejected this edit. Your local document is preserved; retry will rebuild it against the latest snapshot.", retryable: true })
     } else this.clearError()
     this.rebuildVisible()
+    this.drainHistoryRequests()
     this.flush()
+    return true
   }
 
   handleServerOp(message: ServerOpMessage) {
@@ -275,10 +306,7 @@ export class SquigSyncCore {
       this.clearError()
     }
     this.rebuildVisible()
-    if (!this.pending.length && this.undoRequested) {
-      this.undoRequested = false
-      this.performUndo()
-    }
+    this.drainHistoryRequests()
     this.flush()
   }
 
@@ -305,27 +333,15 @@ export class SquigSyncCore {
   }
 
   undo(): boolean {
-    if (!this.history.length) return true
     if (this.paused) {
-      this.performUndo()
-      this.retry()
+      if (this.performUndo()) this.retry()
       return true
     }
-    if (this.pending.length || this.inFlight !== null) {
-      this.undoRequested = true
-      return true
-    }
-    this.performUndo()
-    return true
+    return this.requestHistory("undo")
   }
 
   redo(): boolean {
-    if (this.pending.length || this.inFlight !== null || this.paused) return true
-    const entry = this.redoHistory.pop()
-    if (!entry) return true
-    this.history.push(entry)
-    this.applyLocalCommand(entry.forwardOps)
-    return true
+    return this.requestHistory("redo")
   }
 
   retry(): boolean {
@@ -337,6 +353,7 @@ export class SquigSyncCore {
     this.clearError()
     this.enqueue(diffDocs(this.baseDoc, wanted))
     this.rebuildVisible()
+    this.drainHistoryRequests()
     this.flush()
     return !this.paused
   }
@@ -353,6 +370,7 @@ export class SquigSyncCore {
       inFlight: this.inFlight,
       historyDepth: this.history.length,
       redoDepth: this.redoHistory.length,
+      queuedHistoryActions: [...this.historyRequests],
       ready: this.ready,
       error: this.error,
     }
@@ -372,12 +390,38 @@ export class SquigSyncCore {
     this.enqueue(forwardOps)
   }
 
-  private performUndo() {
+  private requestHistory(action: HistoryAction): boolean {
+    if (!this.ready || this.paused || this.pending.length || this.inFlight !== null || this.historyRequests.length) {
+      if (this.historyRequests.length < MAX_QUEUED_HISTORY_ACTIONS) this.historyRequests.push(action)
+      return true
+    }
+    return action === "undo" ? this.performUndo() : this.performRedo()
+  }
+
+  private drainHistoryRequests() {
+    while (this.ready && !this.paused && !this.pending.length && this.inFlight === null && this.historyRequests.length) {
+      const action = this.historyRequests.shift()!
+      if (action === "undo") this.performUndo()
+      else this.performRedo()
+    }
+  }
+
+  private performUndo(): boolean {
     const entry = this.history.pop()
-    if (!entry) return
+    if (!entry) return false
     this.redoHistory.push(entry)
     this.redoHistory = this.redoHistory.slice(-MAX_CONNECTED_HISTORY)
     this.applyLocalCommand(entry.inverseOps)
+    return true
+  }
+
+  private performRedo(): boolean {
+    const entry = this.redoHistory.pop()
+    if (!entry) return false
+    this.history.push(entry)
+    this.history = this.history.slice(-MAX_CONNECTED_HISTORY)
+    this.applyLocalCommand(entry.forwardOps)
+    return true
   }
 
   private applyLocalCommand(ops: Op[]) {
@@ -458,7 +502,6 @@ export function startSquigSync(): () => void {
   let activeDocId = useSquig.getState().docId
   let generation = 0
 
-  setConnectedPersistenceMode(true)
   const show = (doc: Doc) => {
     if (isDocumentEditActive()) return
     applyAuthoritativeDocument(doc)
@@ -491,9 +534,21 @@ export function startSquigSync(): () => void {
     } catch { /* Offline fallback keeps the local drawer usable. */ }
   }
 
+  const scheduleReconnect = (session: SquigSyncCore, sessionGeneration: number) => {
+    if (!disposed && sessionGeneration === generation) {
+      reconnectTimer = setTimeout(() => connect(session, sessionGeneration), 500)
+    }
+  }
   const connect = (session = core, sessionGeneration = generation) => {
     if (disposed) return
-    const opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId))
+    let opened: WebSocket
+    try {
+      opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId))
+    } catch {
+      setConnectedPersistenceMode(false)
+      scheduleReconnect(session, sessionGeneration)
+      return
+    }
     socket = opened
     opened.addEventListener("open", () => { if (sessionGeneration === generation) session.setTransportOpen(true) })
     opened.addEventListener("message", (event) => {
@@ -507,7 +562,12 @@ export function startSquigSync(): () => void {
         return
       }
       if (type === "snapshot") {
-        session.handleSnapshot(message as SnapshotMessage)
+        if (!session.handleSnapshot(message as SnapshotMessage)) {
+          if (sessionGeneration === generation) setConnectedPersistenceMode(false)
+          opened.close(1002, "Invalid snapshot")
+          return
+        }
+        setConnectedPersistenceMode(true)
         setConnectedHistoryController({ undo: () => session.undo(), redo: () => session.redo() })
         useSquig.setState({ past: [], future: [] })
         void updateIndex("save")
@@ -517,20 +577,26 @@ export function startSquigSync(): () => void {
         if ((message as ServerOpMessage).by === clientId) void updateIndex("save")
       }
     })
+    opened.addEventListener("error", () => {
+      if (sessionGeneration === generation) setConnectedPersistenceMode(false)
+    })
     opened.addEventListener("close", () => {
       session.setTransportOpen(false)
       if (socket === opened) socket = null
-      if (!disposed && sessionGeneration === generation) reconnectTimer = setTimeout(() => connect(session, sessionGeneration), 500)
+      if (sessionGeneration === generation) setConnectedPersistenceMode(false)
+      scheduleReconnect(session, sessionGeneration)
     })
   }
 
   const unsubscribeEdits = subscribeDocumentEdits((event) => {
+    if (event.docId !== activeDocId) return
     if (event.type === "commit") core.localDocumentGesture(event.before, event.after)
     else core.present()
   })
   const unsubscribe = useSquig.subscribe((state, previous) => {
     if (state.docId !== previous.docId) {
       generation++
+      setConnectedPersistenceMode(false)
       if (reconnectTimer) clearTimeout(reconnectTimer)
       reconnectTimer = null
       const previousSocket = socket

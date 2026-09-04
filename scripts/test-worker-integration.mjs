@@ -174,6 +174,12 @@ async function run() {
   const badAgentOrigin = await fetch(`${origin}/agents/squig-doc/security-check`, { headers: { Origin: "https://evil.example" } })
   assert(badDocsOrigin.status === 403 && badAgentOrigin.status === 403, "disallowed Origin reached a protected route")
   assert((await fetch(`${origin}/api/docs`)).ok, "ENVIRONMENT=local did not allow local unauthenticated docs access")
+  for (const appOrigin of ["http://localhost:3000", "http://127.0.0.1:3000"]) {
+    const docs = await fetch(`${origin}/api/docs`, { headers: { Origin: appOrigin } })
+    const preflight = await fetch(`${origin}/api/docs`, { method: "OPTIONS", headers: { Origin: appOrigin, "Access-Control-Request-Method": "PUT" } })
+    assert(docs.ok && docs.headers.get("Access-Control-Allow-Origin") === appOrigin, `local docs rejected ${appOrigin}`)
+    assert(preflight.status === 204 && preflight.headers.get("Access-Control-Allow-Origin") === appOrigin && preflight.headers.get("Access-Control-Allow-Credentials") === "true", `local preflight rejected ${appOrigin}`)
+  }
 
   const docId = "phase3-two-client-proof"
   const [a, b] = await Promise.all([new CoreClient(docId, "integration-a").open(), new CoreClient(docId, "integration-b").open()])
@@ -253,7 +259,7 @@ async function run() {
     duplicateResend: "no revision increment",
     frameworkFrames: 0,
     connectedUndo: "SquigSyncCore preserved remote edit",
-    security: "local allowed; docs and agent origins rejected",
+    security: "both loopback origins/preflights allowed locally; foreign docs and agent origins rejected",
     wranglerRestart: "state and D1 persisted",
   }, null, 2))
 }

@@ -1,5 +1,5 @@
 import { routeAgentRequest } from "agents"
-import { requestSecurity } from "./security"
+import { isAllowedOrigin, requestSecurity, type SecurityContext } from "./security"
 
 export { SquigDoc } from "./squig-doc"
 
@@ -10,19 +10,16 @@ interface DocRow {
   updated_at: number
 }
 
-function ownerOf(request: Request): string {
-  return request.headers.get("Cf-Access-Authenticated-User-Email")?.trim().toLowerCase() || "local"
-}
-
 function protectedRoute(pathname: string): boolean {
   return pathname === "/api/docs" || pathname.startsWith("/api/docs/") || pathname.startsWith("/agents/")
 }
 
 function corsHeaders(request: Request, env: Env): HeadersInit {
   const origin = request.headers.get("Origin")
-  if (!origin || origin !== env.APP_ORIGIN) return { Vary: "Origin" }
+  if (!origin || !isAllowedOrigin(origin, env)) return { Vary: "Origin" }
   return {
     "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Methods": "GET, PUT, OPTIONS",
     Vary: "Origin",
@@ -36,14 +33,14 @@ function json(request: Request, env: Env, value: unknown, init: ResponseInit = {
   return new Response(JSON.stringify(value), { ...init, headers })
 }
 
-async function docsApi(request: Request, env: Env, url: URL): Promise<Response | null> {
+async function docsApi(request: Request, env: Env, url: URL, security: SecurityContext | null): Promise<Response | null> {
   if (url.pathname === "/api/docs" && request.method === "OPTIONS") {
     return new Response(null, { status: 204, headers: corsHeaders(request, env) })
   }
 
   if (url.pathname === "/api/docs" && request.method === "GET") {
     try {
-      const owner = ownerOf(request)
+      const owner = security?.owner ?? "local"
       const rows = await env.DOCS_DB.prepare(
         "SELECT id, name, owner, updated_at FROM docs WHERE owner = ? ORDER BY updated_at DESC"
       ).bind(owner).all<DocRow>()
@@ -70,7 +67,7 @@ async function docsApi(request: Request, env: Env, url: URL): Promise<Response |
   }
 
   const docId = decodeURIComponent(match[1])
-  const owner = ownerOf(request)
+  const owner = security?.owner ?? "local"
   const updatedAt = Date.now()
   try {
     await env.DOCS_DB.prepare(
@@ -87,11 +84,14 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === "/healthz") return Response.json({ ok: true })
+    let security: SecurityContext | null = null
     if (protectedRoute(url.pathname)) {
-      const rejected = requestSecurity(request, env)
-      if (rejected) return rejected
+      const decision = await requestSecurity(request, env)
+      if (decision instanceof Response) return decision
+      security = decision
+      if (decision.preflight) return new Response(null, { status: 204, headers: corsHeaders(request, env) })
     }
-    const api = await docsApi(request, env, url)
+    const api = await docsApi(request, env, url, security)
     if (api) return api
     const agent = await routeAgentRequest(request, env)
     if (agent) return agent

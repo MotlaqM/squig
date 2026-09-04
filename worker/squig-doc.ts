@@ -1,10 +1,9 @@
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents"
 import { z } from "zod"
-import { validNode } from "../lib/clipboard-payload"
+import { validDocument } from "../lib/agent/validate"
 import { applyOp } from "../lib/ops/apply-op"
 import { seedFromId } from "../lib/ops/context"
 import type { Doc, Op, OpContext } from "../lib/ops/types"
-import { sameValue } from "../lib/ops/value"
 import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
 
 export interface SquigDocState extends Doc {
@@ -61,16 +60,6 @@ const REDUCER_CONTEXT: OpContext = {
 
 function emptyState(): SquigDocState {
   return { nodes: {}, order: [], rev: 0, clientHeads: {} }
-}
-
-function validDocument(doc: Doc): boolean {
-  const keys = Object.keys(doc.nodes)
-  if (new Set(doc.order).size !== doc.order.length || doc.order.length !== keys.length) return false
-  if (doc.order.some((nodeId) => !doc.nodes[nodeId]) || keys.some((nodeId) => !doc.order.includes(nodeId))) return false
-  return keys.every((nodeId) => {
-    const clean = validNode(structuredClone(doc.nodes[nodeId]))
-    return clean !== null && clean.id === nodeId && sameValue(clean, doc.nodes[nodeId])
-  })
 }
 
 function validState(value: unknown): value is SquigDocState {
