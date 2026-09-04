@@ -29,6 +29,7 @@ const local = new Map<string, string>()
 }
 
 const {
+  MAX_CONNECTED_HISTORY_BYTES,
   SquigSyncCore,
   chunkCommands,
   createPageClientId,
@@ -38,6 +39,7 @@ const {
 const {
   MAX_PENDING_INTENT_COMMANDS,
   PENDING_INTENT_JOURNAL_VERSION,
+  captureIntentTransition,
   loadPendingIntents,
   pendingIntentJournalKey,
   savePendingIntents,
@@ -193,13 +195,113 @@ function check(name: string, condition: boolean, detail = "") {
 // Pending intent storage is versioned, bounded, malformed-data safe, and document-scoped.
 {
   local.clear()
-  const intent: Op[][] = [[{ t: "update", id: "shared", patch: { x: 10 } }]]
-  check("intent journal: current version round-trips", PENDING_INTENT_JOURNAL_VERSION === 1 && savePendingIntents("journal-a", intent) && sameValue(loadPendingIntents("journal-a"), intent))
+  const before: Doc = { nodes: { shared: shape("shared", 0) }, order: ["shared"] }
+  const after: Doc = { nodes: { shared: shape("shared", 10) }, order: ["shared"] }
+  const intent = captureIntentTransition(before, after)
+  check("intent journal: current version round-trips", PENDING_INTENT_JOURNAL_VERSION === 2 && savePendingIntents("journal-a", [intent]) && sameValue(loadPendingIntents("journal-a"), [intent]))
   check("intent journal: one document cannot read another document's intent", loadPendingIntents("journal-b").length === 0)
-  local.set(pendingIntentJournalKey("journal-b"), JSON.stringify({ version: 1, docId: "journal-b", intents: [[{ nope: true }]] }))
+  local.set(pendingIntentJournalKey("journal-b"), JSON.stringify({ version: 2, docId: "journal-b", intents: [{ nodes: [{ nope: true }] }] }))
   check("intent journal: malformed entries fail closed", loadPendingIntents("journal-b").length === 0 && !local.has(pendingIntentJournalKey("journal-b")))
-  const tooMany = Array.from({ length: MAX_PENDING_INTENT_COMMANDS + 1 }, () => intent[0])
+  const tooMany = Array.from({ length: MAX_PENDING_INTENT_COMMANDS + 1 }, () => intent)
   check("intent journal: command count is bounded", !savePendingIntents("journal-c", tooMany) && loadPendingIntents("journal-c").length === 0)
+}
+
+// A relative reorder accepted before a lost acknowledgement is not replayed on a fresh page.
+{
+  local.clear()
+  const docId = "lost-ack-reorder"
+  const original: Doc = { nodes: { a: shape("a", 0), b: shape("b", 30), c: shape("c", 60) }, order: ["a", "b", "c"] }
+  const oldPageId = createPageClientId()
+  const oldSent: Array<{ type: string; ops?: Op[] }> = []
+  const oldCore = new SquigSyncCore({
+    clientId: oldPageId,
+    initialDoc: original,
+    send: (message) => oldSent.push(message),
+    show: () => undefined,
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  oldCore.setTransportOpen(true)
+  oldCore.handleSnapshot({ type: "snapshot", doc: original, rev: 5, acceptedClientSeq: 0 })
+  oldCore.localOperations([{ t: "reorder", ids: ["c"], to: "backward" }])
+  const accepted = apply(original, oldSent[0].ops!)
+  oldCore.setTransportOpen(false)
+
+  const newPageId = createPageClientId()
+  const newSent: Array<{ type: string }> = []
+  let shown = accepted
+  const newCore = new SquigSyncCore({
+    clientId: newPageId,
+    initialDoc: accepted,
+    initialPendingIntents: loadPendingIntents(docId),
+    send: (message) => newSent.push(message),
+    show: (doc) => { shown = doc },
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  newCore.setTransportOpen(true)
+  newCore.handleSnapshot({ type: "snapshot", doc: accepted, rev: 6, acceptedClientSeq: 0 })
+  check("lost ack reorder: restart uses a genuinely new page identity", oldPageId !== newPageId)
+  check("lost ack reorder: authoritative accepted order is not applied twice", shown.order.join(",") === "a,c,b" && accepted.order.join(",") === "a,c,b")
+  check("lost ack reorder: accepted transition is dropped without another command", newSent.length === 0 && loadPendingIntents(docId).length === 0)
+}
+
+// A collaborator's later scalar value wins over an accepted-but-unacknowledged journal transition.
+{
+  local.clear()
+  const docId = "lost-ack-scalar"
+  const original: Doc = { nodes: { shared: shape("shared", 0) }, order: ["shared"] }
+  const oldPageId = createPageClientId()
+  const oldSent: Array<{ type: string; ops?: Op[] }> = []
+  const oldCore = new SquigSyncCore({
+    clientId: oldPageId,
+    initialDoc: original,
+    send: (message) => oldSent.push(message),
+    show: () => undefined,
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  oldCore.setTransportOpen(true)
+  oldCore.handleSnapshot({ type: "snapshot", doc: original, rev: 5, acceptedClientSeq: 0 })
+  oldCore.localOperations([{ t: "update", id: "shared", patch: { x: 10 } }])
+  const accepted = apply(original, oldSent[0].ops!)
+  const collaborated = apply(accepted, [{ t: "update", id: "shared", patch: { x: 20 } }])
+  oldCore.setTransportOpen(false)
+
+  const newPageId = createPageClientId()
+  const newSent: Array<{ type: string }> = []
+  let shown = accepted
+  const newCore = new SquigSyncCore({
+    clientId: newPageId,
+    initialDoc: accepted,
+    initialPendingIntents: loadPendingIntents(docId),
+    send: (message) => newSent.push(message),
+    show: (doc) => { shown = doc },
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  newCore.setTransportOpen(true)
+  newCore.handleSnapshot({ type: "snapshot", doc: collaborated, rev: 7, acceptedClientSeq: 0 })
+  check("lost ack conflict: restart uses a genuinely new page identity", oldPageId !== newPageId)
+  check("lost ack conflict: collaborator scalar remains authoritative", shown.nodes.shared.x === 20 && newSent.length === 0)
+  check("lost ack conflict: conflicting stale transition is cleared", loadPendingIntents(docId).length === 0)
+}
+
+// A semantically invalid restored transition cannot discard a valid edit made by the new page.
+{
+  const original: Doc = { nodes: { base: shape("base", 0) }, order: ["base"] }
+  const malformed = {
+    nodes: [{
+      kind: "patch" as const,
+      id: "base",
+      fields: [{ key: "x", before: { present: true, value: 0 }, after: { present: true, value: null } }],
+    }],
+  }
+  const restored = [malformed]
+  const sent: Array<{ type: string; ops?: Op[] }> = []
+  let shown = original
+  const core = new SquigSyncCore({ clientId: "malformed-restore", initialDoc: original, initialPendingIntents: restored, send: (message) => sent.push(message), show: (doc) => { shown = doc } })
+  core.setTransportOpen(true)
+  core.localOperations([{ t: "add", node: shape("live", 30) }])
+  core.handleSnapshot({ type: "snapshot", doc: original, rev: 3, acceptedClientSeq: 0 })
+  check("restored isolation: invalid restored state is discarded with real document validation", shown.nodes.base.x === 0)
+  check("restored isolation: valid current-page pre-snapshot edit remains pending", shown.order.join(",") === "base,live" && sent.length === 1 && sent[0].ops?.some((op) => op.t === "add" && op.node.id === "live") === true)
 }
 
 // Edits made before the first snapshot are replayed over, rather than erased by, a non-empty server doc.
@@ -497,6 +599,24 @@ function check(name: string, condition: boolean, detail = "") {
   check("compact history: multi-megabyte untouched content is not duplicated into history", inspected.historyBytes < 50_000, `bytes=${inspected.historyBytes}`)
 }
 
+// Large reorder history obeys an aggregate byte budget and keeps retained undo correct.
+{
+  const order = Array.from({ length: 10_000 }, (_, index) => `r${index}`)
+  const nodes = Object.fromEntries(order.map((id, index) => [id, { ...shape(id, index), seed: index + 1 }]))
+  const largeOrderDoc: Doc = { nodes, order }
+  const core = new SquigSyncCore({ clientId: "bounded-order-history", initialDoc: largeOrderDoc, send: () => undefined, show: () => undefined })
+  core.handleSnapshot({ type: "snapshot", doc: largeOrderDoc, rev: 0, acceptedClientSeq: 0 })
+  let beforeRetainedUndo = order
+  for (let index = 0; index < 24; index++) {
+    beforeRetainedUndo = [...core.inspect().visibleDoc.order]
+    core.localOperations([{ t: "reorder", ids: ["r9999"], to: "backward" }])
+  }
+  const inspected = core.inspect()
+  check("order history: repeated 10k-id reorders stay within the aggregate byte budget", inspected.historyBytes <= MAX_CONNECTED_HISTORY_BYTES && inspected.historyDepth > 0 && inspected.historyDepth < 24, `bytes=${inspected.historyBytes},depth=${inspected.historyDepth}`)
+  core.undo()
+  check("order history: newest retained reorder remains undoable", sameValue(core.inspect().visibleDoc.order, beforeRetainedUndo))
+}
+
 // Full-document validation stays correct at the advertised limit without quadratic membership scans.
 {
   const order = Array.from({ length: MAX_DOCUMENT_NODES }, (_, index) => `large-${index}`)
@@ -612,7 +732,8 @@ function check(name: string, condition: boolean, detail = "") {
   const restartRemote: Doc = { nodes: { restart: shape("restart", 0) }, order: ["restart"] }
   useSquig.setState({ docId: restartDocId, fileName: "Restart A", nodes: restartRemote.nodes, order: restartRemote.order, files: [], past: [], future: [], stale: false, hydrated: true })
   useSquig.getState().saveNow()
-  const stopBeforeRestart = startSquigSync()
+  const beforeRestartPageId = createPageClientId()
+  const stopBeforeRestart = startSquigSync({ clientId: beforeRestartPageId })
   const beforeRestart = FakeSocket.instances.at(-1)!
   beforeRestart.open()
   beforeRestart.message({ type: "snapshot", doc: restartRemote, rev: 5, acceptedClientSeq: 0 })
@@ -625,9 +746,10 @@ function check(name: string, condition: boolean, detail = "") {
   stopBeforeRestart()
 
   const socketCountBeforeNewStart = FakeSocket.instances.length
-  const stopAfterRestart = startSquigSync()
+  const afterRestartPageId = createPageClientId()
+  const stopAfterRestart = startSquigSync({ clientId: afterRestartPageId })
   const afterRestart = FakeSocket.instances.at(-1)!
-  check("page restart journal: a new sync runtime opens a new transport", FakeSocket.instances.length === socketCountBeforeNewStart + 1)
+  check("page restart journal: a new page identity opens a new transport", beforeRestartPageId !== afterRestartPageId && FakeSocket.instances.length === socketCountBeforeNewStart + 1)
   afterRestart.open()
   afterRestart.message({ type: "snapshot", doc: restartRemote, rev: 5, acceptedClientSeq: 0 })
   const replayed = afterRestart.sent.map((value) => JSON.parse(value) as { type: string; ops?: Op[]; clientId?: string; clientSeq?: number }).findLast((message) => message.type === "op")
