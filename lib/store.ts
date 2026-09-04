@@ -191,6 +191,8 @@ interface SquigState {
 
   /** snapshot current doc onto the undo stack (call once at gesture start) */
   checkpoint: () => void
+  /** close the current gesture checkpoint and publish it as one connected edit */
+  commitCheckpoint: () => boolean
   /** run one discrete command as exactly one undo step — or none, when it
    *  turned out to change nothing. Returns whether it landed. */
   edit: (fn: () => void) => boolean
@@ -284,7 +286,47 @@ export interface ConnectedHistoryController {
 }
 
 let connectedHistoryController: ConnectedHistoryController | null = null
-let remoteDocumentIds = new Set<string>()
+let remoteFiles = new Map<string, FileMeta>()
+let connectedPersistence = false
+let authoritativeDocumentUpdate = false
+
+type DocumentEditEvent =
+  | { type: "commit"; before: DocFields; after: DocFields }
+  | { type: "cancel"; before: DocFields }
+
+const documentEditListeners = new Set<(event: DocumentEditEvent) => void>()
+let documentEdit: { before: DocFields; past: DocSnapshot[]; future: DocSnapshot[] } | null = null
+let documentEditTimer: ReturnType<typeof setTimeout> | null = null
+
+export function subscribeDocumentEdits(listener: (event: DocumentEditEvent) => void): () => void {
+  documentEditListeners.add(listener)
+  return () => documentEditListeners.delete(listener)
+}
+
+export function isDocumentEditActive(): boolean {
+  return documentEdit !== null
+}
+
+export function isAuthoritativeDocumentUpdate(): boolean {
+  return authoritativeDocumentUpdate
+}
+
+export function setConnectedPersistenceMode(connected: boolean): void {
+  connectedPersistence = connected
+  if (!connected) {
+    const local = listFiles().find((file) => file.id === useSquig.getState().docId)
+    seen = local?.updatedAt ?? null
+  }
+}
+
+function mergedFiles(local: readonly FileMeta[]): FileMeta[] {
+  const merged = new Map(local.map((file) => [file.id, file]))
+  for (const [id, file] of remoteFiles) {
+    const existing = merged.get(id)
+    if (!existing || file.updatedAt >= existing.updatedAt) merged.set(id, file)
+  }
+  return [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt)
+}
 
 /** Connected history is operation-based; the existing snapshots remain the offline fallback. */
 export function setConnectedHistoryController(controller: ConnectedHistoryController | null): void {
@@ -293,12 +335,27 @@ export function setConnectedHistoryController(controller: ConnectedHistoryContro
 
 /** Merge D1's cross-document projection into the local drawer without discarding offline-only files. */
 export function syncRemoteFiles(files: readonly FileMeta[]): void {
-  remoteDocumentIds = new Set(files.map((file) => file.id))
-  useSquig.setState((state) => {
-    const merged = new Map(state.files.map((file) => [file.id, file]))
-    for (const file of files) merged.set(file.id, file)
-    return { files: [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt) }
-  })
+  remoteFiles = new Map(files.map((file) => [file.id, file]))
+  useSquig.setState({ files: mergedFiles(listFiles()) })
+}
+
+/** Install a server-authoritative document while retaining localStorage as an offline cache. */
+export function applyAuthoritativeDocument(doc: DocFields): void {
+  authoritativeDocumentUpdate = true
+  try {
+    const state = useSquig.getState()
+    useSquig.setState({
+      nodes: doc.nodes,
+      order: doc.order,
+      selection: state.selection.filter((nodeId) => doc.nodes[nodeId]),
+      selectionGroupId: null,
+      stale: false,
+    })
+    dirty = true
+    flushSave(useSquig.getState, false)
+  } finally {
+    authoritativeDocumentUpdate = false
+  }
 }
 
 const MAX_HISTORY = 100
@@ -400,6 +457,57 @@ function sameDoc(a: DocFields, b: DocFields): boolean {
     if (!y || !sameValue(x, y)) return false
   }
   return true
+}
+
+function beginDocumentEdit(state: SquigState): boolean {
+  if (documentEdit) return false
+  documentEdit = {
+    before: { nodes: state.nodes, order: state.order },
+    past: state.past,
+    future: state.future,
+  }
+  return true
+}
+
+function clearDocumentEditTimer(): void {
+  if (!documentEditTimer) return
+  clearTimeout(documentEditTimer)
+  documentEditTimer = null
+}
+
+function deferDocumentEdit(get: () => SquigState): void {
+  if (!documentEdit || get().transforming) return
+  clearDocumentEditTimer()
+  // Store-only fallback for controls that expose checkpoint/start but no end
+  // callback. Canvas pointer gestures close synchronously through transforming.
+  documentEditTimer = setTimeout(() => {
+    documentEditTimer = null
+    finishDocumentEdit(get)
+  }, 1_100)
+}
+
+function finishDocumentEdit(get: () => SquigState): boolean {
+  const active = documentEdit
+  if (!active) return false
+  clearDocumentEditTimer()
+  const state = get()
+  const after = { nodes: state.nodes, order: state.order }
+  documentEdit = null
+  if (sameDoc(active.before, after)) {
+    useSquig.setState({ past: active.past, future: active.future })
+    return false
+  }
+  stampSelAfter(state.past, state.selection, state.selectionGroupId)
+  for (const listener of documentEditListeners) listener({ type: "commit", before: active.before, after })
+  return true
+}
+
+function cancelDocumentEdit(): void {
+  const active = documentEdit
+  if (!active) return
+  clearDocumentEditTimer()
+  documentEdit = null
+  for (const listener of documentEditListeners) listener({ type: "cancel", before: active.before })
 }
 
 /**
@@ -617,11 +725,12 @@ function flushSave(get: () => SquigState, force = false) {
   // This tab has been told its document moved on without it. Not one more
   // write goes out until it is pointed at another document — ⌘S included,
   // since nobody pressing it is asking to throw away work they can't see.
-  if (s.stale) return
+  if (s.stale && !connectedPersistence) return
   if (!dirty && !force) return
   const known = s.files.some((f) => f.id === s.docId)
   if (!s.order.length && !known && !force) return
   const at = Date.now()
+  const expected = connectedPersistence ? listFiles().find((file) => file.id === s.docId)?.updatedAt ?? null : seen
   const { index, full, stale } = saveFile(
     {
       id: s.docId,
@@ -631,7 +740,7 @@ function flushSave(get: () => SquigState, force = false) {
       updatedAt: at,
       look: lookOf(s),
     },
-    seen
+    expected
   )
   // The drawer holds a version of this document this tab has never seen, and
   // squig has just declined to write over it. Usually the `storage` event gets
@@ -646,7 +755,7 @@ function flushSave(get: () => SquigState, force = false) {
   // be saying the same thing about the same drawing. The line under the file
   // name carries it from there, for as long as it lasts.
   if (full && !s.drawerFull) s.setNotice("no room left in this browser — export this one to keep it")
-  useSquig.setState({ files: index, drawerFull: full })
+  useSquig.setState({ files: mergedFiles(index), drawerFull: full, stale: connectedPersistence ? false : s.stale })
   // a refused write leaves the drawing unsaved, so it stays owed: the next
   // edit, or the tab closing, tries again — which is how squig comes back on
   // its own once the user has made room
@@ -761,9 +870,10 @@ function watchWindow(get: () => SquigState) {
   })
   window.addEventListener("storage", (e) => {
     if (e.key === INDEX_KEY) {
-      useSquig.setState({ files: listFiles() })
+      useSquig.setState({ files: mergedFiles(listFiles()) })
       return
     }
+    if (connectedPersistence) return
     const s = get()
     // e.key is null when the whole origin was cleared; docKey never is, so
     // that lands on "not ours" and this tab is left holding the only copy —
@@ -946,13 +1056,18 @@ export const useSquig = create<SquigState>((set, get) => ({
   setInspectorFocus: (target) => set({ inspectorFocus: target }),
   // called on the edges of a drag, so the hundreds of moves in between don't
   // each write to the store
-  setTransforming: (on) => set((s) => (s.transforming === on ? s : { transforming: on })),
+  setTransforming: (on) => {
+    set((s) => (s.transforming === on ? s : { transforming: on }))
+    if (!on) get().commitCheckpoint()
+  },
   setUiHidden: (on) => set({ uiHidden: on }),
   setShortcutsOpen: (on) => set({ shortcutsOpen: on, commandOpen: false, contextMenu: null }),
   setLinkOpen: (on) => set({ linkOpen: on, contextMenu: null }),
   setNotice: (text) => set((s) => ({ notice: text === null ? null : { id: (s.notice?.id ?? 0) + 1, text } })),
 
   checkpoint: () => {
+    if (isDocumentEditActive()) finishDocumentEdit(get)
+    beginDocumentEdit(get())
     set((s) => {
       const kept = s.past.slice(-MAX_HISTORY + 1)
       // only the newest checkpoint can ever be reverted — once an edit lands on
@@ -963,6 +1078,8 @@ export const useSquig = create<SquigState>((set, get) => ({
       return { past: [...kept, { ...snapshot(s), displacedFuture: s.future }], future: [] }
     })
   },
+
+  commitCheckpoint: () => finishDocumentEdit(get),
 
   /**
    * Roll back to the most recent checkpoint and forget it ever happened.
@@ -981,6 +1098,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       past: past.slice(0, -1),
       future: prev.displacedFuture ?? get().future,
     })
+    cancelDocumentEdit()
     scheduleSave(get)
   },
 
@@ -1015,7 +1133,6 @@ export const useSquig = create<SquigState>((set, get) => ({
       fn()
       return !sameDoc(before, get())
     }
-    const { past, future } = before
     before.checkpoint()
     editing = true
     try {
@@ -1023,31 +1140,27 @@ export const useSquig = create<SquigState>((set, get) => ({
     } finally {
       editing = false
     }
-    const after = get()
-    if (sameDoc(before, after)) {
-      // hand history back whole, rather than popping: `checkpoint` may have
-      // trimmed the far end of `past` to stay under MAX_HISTORY, and an edit
-      // that did nothing has no business costing anyone their oldest step
-      set({ past, future })
-      return false
-    }
-    stampSelAfter(after.past, after.selection, after.selectionGroupId)
-    scheduleSave(get)
-    return true
+    const changed = get().commitCheckpoint()
+    if (changed) scheduleSave(get)
+    return changed
   },
 
   applyOperation: (op) => {
     const before = get()
     const doc = { nodes: before.nodes, order: before.order }
     const result = applyOp(doc, op, STORE_OP_CONTEXT)
-    if (result.doc !== doc) set({ nodes: result.doc.nodes, order: result.doc.order })
+    if (result.doc !== doc) {
+      set({ nodes: result.doc.nodes, order: result.doc.order })
+      deferDocumentEdit(get)
+    }
     return result
   },
 
   addNode: (node, opts = {}) => {
     const id = node.id ?? nanoid(8)
     const seed = node.seed ?? freshSeed()
-    if (opts.checkpoint !== false) get().checkpoint()
+    const ownCheckpoint = opts.checkpoint !== false && !editing
+    if (ownCheckpoint) get().checkpoint()
     const s = get()
     const result = s.applyOperation({ t: "add", node: { ...node, id, seed } as SquigNode })
     if (result.affected.length) set((current) => {
@@ -1060,11 +1173,15 @@ export const useSquig = create<SquigState>((set, get) => ({
       }
     })
     scheduleSave(get)
+    const draft = node.type === "text" && "text" in node && node.text === ""
+    if (ownCheckpoint && !draft && !get().transforming) get().commitCheckpoint()
+    else if (draft) clearDocumentEditTimer()
     return id
   },
 
   addNodes: (nodes, opts = {}) => {
-    if (opts.checkpoint !== false) get().checkpoint()
+    const ownCheckpoint = opts.checkpoint !== false && !editing
+    if (ownCheckpoint) get().checkpoint()
     const ids = nodes.filter((node) => get().applyOperation({ t: "add", node }).affected.length).map((node) => node.id)
     if (ids.length) set((s) => {
       const selection = opts.select !== false ? ids : s.selection
@@ -1073,31 +1190,37 @@ export const useSquig = create<SquigState>((set, get) => ({
       return { selection, selectionGroupId }
     })
     scheduleSave(get)
+    if (ownCheckpoint) get().commitCheckpoint()
   },
 
   updateNode: (id, patch, opts) => {
-    if (opts?.checkpoint) get().checkpoint()
+    const ownCheckpoint = opts?.checkpoint === true && !editing
+    if (ownCheckpoint) get().checkpoint()
     const result = get().applyOperation({ t: "update", id, patch })
     if (result.affected.length) {
       const s = get()
       stampSelAfter(s.past, s.selection, s.selectionGroupId)
     }
     scheduleSave(get)
+    if (ownCheckpoint) get().commitCheckpoint()
   },
 
   updateNodes: (patches, opts) => {
-    if (opts?.checkpoint) get().checkpoint()
+    const ownCheckpoint = opts?.checkpoint === true && !editing
+    if (ownCheckpoint) get().checkpoint()
     const result = get().applyOperation({ t: "updateMany", patches })
     if (result.affected.length) {
       const s = get()
       stampSelAfter(s.past, s.selection, s.selectionGroupId)
     }
     scheduleSave(get)
+    if (ownCheckpoint) get().commitCheckpoint()
   },
 
   removeNodes: (ids, opts) => {
     if (!ids.length) return
-    if (opts?.checkpoint !== false) get().checkpoint()
+    const ownCheckpoint = opts?.checkpoint !== false && !editing
+    if (ownCheckpoint) get().checkpoint()
     const result = get().applyOperation({ t: "remove", ids })
     if (result.affected.length) set((s) => {
       const selection = s.selection.filter((i) => !ids.includes(i))
@@ -1120,6 +1243,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       }
     })
     scheduleSave(get)
+    if (ownCheckpoint) get().commitCheckpoint()
   },
 
   deleteSelected: () => get().removeNodes(get().selection),
@@ -1157,7 +1281,10 @@ export const useSquig = create<SquigState>((set, get) => ({
    */
   commitText: (id, patch) => {
     const { past, nodes } = get()
-    if (freshDraft(past, nodes, id)) get().updateNode(id, patch)
+    if (freshDraft(past, nodes, id)) {
+      get().updateNode(id, patch)
+      get().commitCheckpoint()
+    }
     else get().edit(() => get().updateNode(id, patch))
   },
 
@@ -1191,10 +1318,10 @@ export const useSquig = create<SquigState>((set, get) => ({
     const { nodes } = get()
     const locked = ids.filter((id) => nodes[id]?.locked)
     if (!locked.length) return
-    get().checkpoint()
-    get().applyOperation({ t: "lock", ids: locked, locked: false })
-    // handing them back selected is the point — you unlocked them to touch them
-    get().setSelection(locked)
+    get().edit(() => {
+      get().applyOperation({ t: "lock", ids: locked, locked: false })
+      get().setSelection(locked)
+    })
   },
 
   unlockAll: () => get().unlockNodes(lockedIds(get().nodes, get().order)),
@@ -1263,6 +1390,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       connectedHistoryController.undo()
       return
     }
+    finishDocumentEdit(get)
     const { past } = get()
     if (!past.length) return
     set((s) => {
@@ -1297,6 +1425,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       connectedHistoryController.redo()
       return
     }
+    finishDocumentEdit(get)
     const { future } = get()
     if (!future.length) return
     set((s) => {
@@ -1333,7 +1462,7 @@ export const useSquig = create<SquigState>((set, get) => ({
       order: clean.order,
       selection: [],
       selectionGroupId: null,
-      files,
+      files: mergedFiles(files),
       contextRow: prefs.contextRow,
       bigNudge: prefs.bigNudge,
       hydrated: true,
@@ -1770,7 +1899,7 @@ export const useSquig = create<SquigState>((set, get) => ({
     const doc = readFile(id)
     if (!doc) {
       const remote = get().files.find((file) => file.id === id)
-      if (remote && remoteDocumentIds.has(id)) {
+      if (remote && remoteFiles.has(id)) {
         set({
           docId: id,
           fileName: remote.name,
@@ -1790,7 +1919,7 @@ export const useSquig = create<SquigState>((set, get) => ({
         return
       }
       // the index knew about it but the document itself is gone
-      set({ files: dropFile(id) })
+      set({ files: mergedFiles(dropFile(id)) })
       return
     }
     const clean = sanitize(doc.nodes, doc.order)
@@ -1822,7 +1951,7 @@ export const useSquig = create<SquigState>((set, get) => ({
 
   deleteFile: (id) => {
     const files = dropFile(id)
-    set({ files })
+    set({ files: mergedFiles(files) })
     if (id !== get().docId) return
     // The file you had open just went away. Let go of it before landing
     // somewhere else, or the save on the way out would write it right back.

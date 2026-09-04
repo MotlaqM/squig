@@ -1,4 +1,5 @@
 import { routeAgentRequest } from "agents"
+import { requestSecurity } from "./security"
 
 export { SquigDoc } from "./squig-doc"
 
@@ -10,7 +11,11 @@ interface DocRow {
 }
 
 function ownerOf(request: Request): string {
-  return request.headers.get("Cf-Access-Authenticated-User-Email")?.trim().toLowerCase() || "anonymous"
+  return request.headers.get("Cf-Access-Authenticated-User-Email")?.trim().toLowerCase() || "local"
+}
+
+function protectedRoute(pathname: string): boolean {
+  return pathname === "/api/docs" || pathname.startsWith("/api/docs/") || pathname.startsWith("/agents/")
 }
 
 function corsHeaders(request: Request, env: Env): HeadersInit {
@@ -82,6 +87,10 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url)
     if (url.pathname === "/healthz") return Response.json({ ok: true })
+    if (protectedRoute(url.pathname)) {
+      const rejected = requestSecurity(request, env)
+      if (rejected) return rejected
+    }
     const api = await docsApi(request, env, url)
     if (api) return api
     const agent = await routeAgentRequest(request, env)

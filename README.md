@@ -82,6 +82,15 @@ pnpm install
 pnpm dev
 ```
 
+When `NEXT_PUBLIC_SQUIG_WORKER_URL` is configured, the Worker Durable Object is
+the authoritative document store and D1 is only a drawer-metadata projection.
+Browser rename/save requests currently own the D1 row; Agent operations update
+the durable document but do not touch D1 directly. Keeping that projection
+best-effort prevents a D1 outage from rolling back an accepted document edit.
+Copy `.dev.vars.example` to `.dev.vars` for local Worker development; the
+committed Wrangler default is production and fails closed without an Access
+identity.
+
 No environment variables, no database, no accounts — documents live in the
 browser's own storage. `pnpm test` type-checks and runs the geometry,
 selection and clipboard suites; `pnpm lint` and `pnpm build` are the other two

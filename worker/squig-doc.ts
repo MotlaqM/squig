@@ -5,11 +5,7 @@ import { applyOp } from "../lib/ops/apply-op"
 import { seedFromId } from "../lib/ops/context"
 import type { Doc, Op, OpContext } from "../lib/ops/types"
 import { sameValue } from "../lib/ops/value"
-
-interface ClientHead {
-  seq: number
-  rev: number
-}
+import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
 
 export interface SquigDocState extends Doc {
   rev: number
@@ -47,7 +43,7 @@ const opSchema = z.discriminatedUnion("t", [
 
 const commandSchema = z.object({
   type: z.literal("op"),
-  ops: z.array(opSchema).min(1).max(100),
+  ops: z.array(opSchema).min(1).max(MAX_COMMAND_OPS),
   clientRev: z.number().int().nonnegative(),
   clientId: id,
   clientSeq: z.number().int().positive(),
@@ -117,7 +113,7 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
   }
 
   onMessage(connection: Connection, message: WSMessage) {
-    if (typeof message !== "string" || message.length > 1_000_000) {
+    if (typeof message !== "string" || new TextEncoder().encode(message).byteLength > MAX_COMMAND_BYTES) {
       this.sendSnapshot(connection, this.connectionClientId(connection), "invalid")
       return
     }
@@ -176,10 +172,10 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
       nodes: doc.nodes,
       order: doc.order,
       rev,
-      clientHeads: {
+      clientHeads: boundClientHeads({
         ...state.clientHeads,
         [connectionClientId]: { seq: command.data.clientSeq, rev },
-      },
+      }),
     })
     this.broadcast(JSON.stringify({
       type: "op",
