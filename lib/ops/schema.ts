@@ -1,6 +1,26 @@
 import type { ComponentDef, ControlDef } from "../library/registry"
 import { controlIsVisible } from "../selection"
 import type { ComponentNode } from "../types"
+import {
+  array as zArray,
+  boolean as zBoolean,
+  intersection as zIntersection,
+  literal as zLiteral,
+  looseObject as zLooseObject,
+  maximum as zMaximum,
+  minLength as zMinLength,
+  minimum as zMinimum,
+  null as zNull,
+  number as zNumber,
+  optional as zOptional,
+  refine as zRefine,
+  strictObject as zStrictObject,
+  string as zString,
+  unknown as zUnknown,
+  union as zUnion,
+  xor as zXor,
+  type ZodMiniType,
+} from "zod/mini"
 
 export interface JsonSchema {
   type?: string | string[]
@@ -20,97 +40,173 @@ export interface JsonSchema {
   default?: unknown
 }
 
-function jsonEqual(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true
-  if (Array.isArray(left) || Array.isArray(right)) {
-    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => jsonEqual(value, right[index]))
-  }
-  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
-  const leftRecord = left as Record<string, unknown>
-  const rightRecord = right as Record<string, unknown>
-  const leftKeys = Object.keys(leftRecord)
-  const rightKeys = Object.keys(rightRecord)
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => key in rightRecord && jsonEqual(leftRecord[key], rightRecord[key]))
+const SUPPORTED_SCHEMA_KEYS = new Set([
+  "type", "title", "description", "properties", "required", "additionalProperties", "enum", "const", "items",
+  "minimum", "maximum", "minLength", "not", "oneOf", "default",
+])
+const SUPPORTED_TYPES = new Set(["object", "array", "string", "number", "integer", "boolean", "null"])
+type JsonLiteral = string | number | boolean | null
+
+const compiledSchemas = new Map<string, ZodMiniType>()
+
+function invalidSchema(message: string): never {
+  throw new TypeError(`Unsupported Goal 1 JSON Schema: ${message}`)
 }
 
-function matchesType(value: unknown, type: string): boolean {
+function assertFiniteNumber(value: unknown, keyword: string): asserts value is number {
+  if (typeof value !== "number" || !Number.isFinite(value)) invalidSchema(`${keyword} must be a finite number`)
+}
+
+function isJsonLiteral(value: unknown): value is JsonLiteral {
+  return value === null || typeof value === "string" || typeof value === "boolean" || (typeof value === "number" && Number.isFinite(value))
+}
+
+function compileLiterals(values: unknown[], keyword: "const" | "enum"): ZodMiniType {
+  if (values.length === 0 || values.some((value) => !isJsonLiteral(value))) {
+    return invalidSchema(`${keyword} must contain at least one JSON primitive`)
+  }
+  return zLiteral(values as [JsonLiteral, ...JsonLiteral[]])
+}
+
+function compileObject(schema: JsonSchema): ZodMiniType {
+  const properties = schema.properties ?? {}
+  if (!properties || typeof properties !== "object" || Array.isArray(properties)) invalidSchema("properties must be an object")
+  if (schema.additionalProperties !== undefined && typeof schema.additionalProperties !== "boolean") {
+    invalidSchema("additionalProperties must be boolean")
+  }
+  if (schema.required !== undefined && (!Array.isArray(schema.required) || schema.required.some((key) => typeof key !== "string"))) {
+    invalidSchema("required must be an array of property names")
+  }
+
+  const required = new Set(schema.required ?? [])
+  for (const key of required) {
+    if (!(key in properties)) invalidSchema(`required property ${JSON.stringify(key)} is not declared`)
+  }
+  const shape: Record<string, ZodMiniType> = {}
+  for (const [key, propertySchema] of Object.entries(properties)) {
+    const property = compileJsonSchema(propertySchema)
+    shape[key] = required.has(key) ? property : zOptional(property)
+  }
+  return schema.additionalProperties === false ? zStrictObject(shape) : zLooseObject(shape)
+}
+
+function compileType(schema: JsonSchema, type: string): ZodMiniType {
+  if (!SUPPORTED_TYPES.has(type)) return invalidSchema(`unknown type ${JSON.stringify(type)}`)
   switch (type) {
-    case "object": return !!value && typeof value === "object" && !Array.isArray(value)
-    case "array": return Array.isArray(value)
-    case "string": return typeof value === "string"
-    case "number": return typeof value === "number" && Number.isFinite(value)
-    case "integer": return typeof value === "number" && Number.isInteger(value)
-    case "boolean": return typeof value === "boolean"
-    case "null": return value === null
-    default: return false
-  }
-}
-
-function schemaError(path: string, message: string): TypeError {
-  return new TypeError(`${path} ${message}`)
-}
-
-/** Validate the complete JSON Schema subset emitted and declared by Goal 1. */
-export function assertJsonSchema(value: unknown, schema: JsonSchema, path = "arguments"): void {
-  if (schema.oneOf) {
-    let matches = 0
-    for (const candidate of schema.oneOf) {
-      try {
-        assertJsonSchema(value, candidate, path)
-        matches++
-      } catch {
-        // A oneOf branch mismatch is expected; exactly one branch must survive.
+    case "object":
+      return compileObject(schema)
+    case "array":
+      return zArray(schema.items ? compileJsonSchema(schema.items) : zUnknown())
+    case "string": {
+      let compiled = zString()
+      if (schema.minLength !== undefined) {
+        if (!Number.isInteger(schema.minLength) || schema.minLength < 0) invalidSchema("minLength must be a non-negative integer")
+        compiled = compiled.check(zMinLength(schema.minLength))
       }
+      return compiled
     }
-    if (matches !== 1) throw schemaError(path, "must match exactly one allowed shape")
-  }
-
-  if (schema.not) {
-    let excluded = true
-    try {
-      assertJsonSchema(value, schema.not, path)
-    } catch {
-      excluded = false
+    case "number": {
+      let compiled = zNumber()
+      if (schema.minimum !== undefined) {
+        assertFiniteNumber(schema.minimum, "minimum")
+        compiled = compiled.check(zMinimum(schema.minimum))
+      }
+      if (schema.maximum !== undefined) {
+        assertFiniteNumber(schema.maximum, "maximum")
+        compiled = compiled.check(zMaximum(schema.maximum))
+      }
+      return compiled
     }
-    if (excluded) throw schemaError(path, "uses an excluded value")
-  }
-
-  if (schema.const !== undefined && !jsonEqual(value, schema.const)) throw schemaError(path, `must equal ${JSON.stringify(schema.const)}`)
-  if (schema.enum && !schema.enum.some((candidate) => jsonEqual(value, candidate))) {
-    throw schemaError(path, `must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(", ")}`)
-  }
-
-  if (schema.type) {
-    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
-    if (!types.some((type) => matchesType(value, type))) throw schemaError(path, `must be ${types.join(" or ")}`)
-  }
-
-  if (typeof value === "string" && schema.minLength !== undefined && [...value].length < schema.minLength) {
-    throw schemaError(path, `must contain at least ${schema.minLength} character${schema.minLength === 1 ? "" : "s"}`)
-  }
-  if (typeof value === "number") {
-    if (schema.minimum !== undefined && value < schema.minimum) throw schemaError(path, `must be at least ${schema.minimum}`)
-    if (schema.maximum !== undefined && value > schema.maximum) throw schemaError(path, `must be at most ${schema.maximum}`)
-  }
-
-  if (Array.isArray(value) && schema.items) {
-    value.forEach((item, index) => assertJsonSchema(item, schema.items!, `${path}[${index}]`))
-  }
-
-  if (value && typeof value === "object" && !Array.isArray(value)) {
-    const object = value as Record<string, unknown>
-    for (const key of schema.required ?? []) {
-      if (!(key in object)) throw schemaError(path, `requires ${key}`)
+    case "integer": {
+      let compiled = zNumber().check(zRefine(Number.isInteger, { message: "must be an integer" }))
+      if (schema.minimum !== undefined) {
+        assertFiniteNumber(schema.minimum, "minimum")
+        compiled = compiled.check(zMinimum(schema.minimum))
+      }
+      if (schema.maximum !== undefined) {
+        assertFiniteNumber(schema.maximum, "maximum")
+        compiled = compiled.check(zMaximum(schema.maximum))
+      }
+      return compiled
     }
-    const properties = schema.properties ?? {}
-    if (schema.additionalProperties === false) {
-      const unknown = Object.keys(object).find((key) => !(key in properties))
-      if (unknown) throw schemaError(`${path}.${unknown}`, "is not allowed")
-    }
-    for (const [key, property] of Object.entries(properties)) {
-      if (key in object) assertJsonSchema(object[key], property, `${path}.${key}`)
-    }
+    case "boolean":
+      return zBoolean()
+    case "null":
+      return zNull()
+    default:
+      return invalidSchema(`unknown type ${JSON.stringify(type)}`)
   }
+}
+
+function combine(left: ZodMiniType | undefined, right: ZodMiniType): ZodMiniType {
+  return left ? zIntersection(left, right) : right
+}
+
+function compileJsonSchema(schema: JsonSchema): ZodMiniType {
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) return invalidSchema("schema must be an object")
+  const unsupported = Object.keys(schema).find((key) => !SUPPORTED_SCHEMA_KEYS.has(key))
+  if (unsupported) return invalidSchema(`keyword ${JSON.stringify(unsupported)}`)
+  if (schema.title !== undefined && typeof schema.title !== "string") invalidSchema("title must be a string")
+  if (schema.description !== undefined && typeof schema.description !== "string") invalidSchema("description must be a string")
+
+  const cacheKey = JSON.stringify(schema)
+  const cached = compiledSchemas.get(cacheKey)
+  if (cached) return cached
+
+  if (schema.properties !== undefined && schema.type !== "object") invalidSchema("properties require type object")
+  if (schema.required !== undefined && schema.type !== "object") invalidSchema("required requires type object")
+  if (schema.additionalProperties !== undefined && schema.type !== "object") invalidSchema("additionalProperties requires type object")
+  if (schema.items !== undefined && schema.type !== "array") invalidSchema("items require type array")
+  if (schema.minLength !== undefined && schema.type !== "string") invalidSchema("minLength requires type string")
+  if ((schema.minimum !== undefined || schema.maximum !== undefined) && schema.type !== "number" && schema.type !== "integer") {
+    invalidSchema("minimum and maximum require a numeric type")
+  }
+
+  const declaredTypes = schema.type === undefined ? [] : Array.isArray(schema.type) ? schema.type : [schema.type]
+  if (declaredTypes.length === 0 && schema.type !== undefined) invalidSchema("type array must not be empty")
+  let compiled = declaredTypes.length === 0
+    ? undefined
+    : declaredTypes.length === 1
+      ? compileType(schema, declaredTypes[0])
+      : zUnion(declaredTypes.map((type) => compileType(schema, type)))
+
+  if ("const" in schema) compiled = combine(compiled, compileLiterals([schema.const], "const"))
+  if (schema.enum !== undefined) {
+    if (!Array.isArray(schema.enum)) invalidSchema("enum must be an array")
+    compiled = combine(compiled, compileLiterals(schema.enum, "enum"))
+  }
+  if (schema.oneOf !== undefined) {
+    if (!Array.isArray(schema.oneOf) || schema.oneOf.length === 0) invalidSchema("oneOf must contain at least one schema")
+    compiled = combine(compiled, zXor(schema.oneOf.map(compileJsonSchema)))
+  }
+  compiled ??= zUnknown()
+
+  if (schema.not !== undefined) {
+    if (!schema.not || typeof schema.not !== "object" || Array.isArray(schema.not)) {
+      invalidSchema("not must be an object")
+    }
+    const keys = Object.keys(schema.not)
+    if (keys.length !== 1 || keys[0] !== "const" || !("const" in schema.not)) {
+      invalidSchema("not only supports { const: <JSON primitive> }")
+    }
+    const excluded = compileLiterals([schema.not.const], "const")
+    compiled = compiled.check(zRefine(
+      (value) => !excluded.safeParse(value).success,
+      { message: `must not equal ${JSON.stringify(schema.not.const)}` },
+    ))
+  }
+
+  compiledSchemas.set(cacheKey, compiled)
+  return compiled
+}
+
+/** Validate against the JSON Schema catalogue through its cached Zod Mini compilation. */
+export function assertJsonSchema(value: unknown, schema: JsonSchema, path = "arguments"): void {
+  const result = compileJsonSchema(schema).safeParse(value)
+  if (result.success) return
+  const issue = result.error.issues[0]
+  const issuePath = issue?.path.map((segment) => typeof segment === "number" ? `[${segment}]` : `.${String(segment)}`).join("") ?? ""
+  throw new TypeError(`${path}${issuePath} ${issue?.message ?? "is invalid"}`)
 }
 
 function schemaForControl(control: ControlDef, defaultValue: unknown): JsonSchema {
@@ -166,7 +262,7 @@ export function controlsToJsonSchema(
   return { type: "object", properties, additionalProperties: false }
 }
 
-/** Runtime validation paired with controlsToJsonSchema, without another bundle dependency. */
+/** Runtime validation paired with controlsToJsonSchema. */
 export function validateComponentProps(
   def: ComponentDef,
   props: Record<string, unknown>,

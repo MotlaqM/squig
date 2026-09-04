@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { ALL_DEFS, getDef } from "../lib/library/registry.ts"
-import { applyOp, applyOps, controlsToJsonSchema, invert, type Doc, type Op, type OpContext } from "../lib/ops/index.ts"
+import { applyOp, applyOps, assertJsonSchema, controlsToJsonSchema, invert, type Doc, type JsonSchema, type Op, type OpContext } from "../lib/ops/index.ts"
 import type { ArrowNode, ComponentNode, ShapeNode, SquigNode, TextNode } from "../lib/types.ts"
 
 const context: OpContext = {
@@ -166,6 +166,35 @@ for (const def of ALL_DEFS) {
   const schema = controlsToJsonSchema(def)
   assert.equal(schema.type, "object", `${def.kind} schema is an object`)
   assert.doesNotThrow(() => JSON.stringify(schema), `${def.kind} schema stringifies`)
+  assert.doesNotThrow(() => assertJsonSchema({}, schema), `${def.kind} schema compiles through Zod`)
 }
+
+assert.throws(
+  () => assertJsonSchema("value", { not: { type: "string" } }),
+  /not only supports \{ const:/,
+  "unsupported not shapes fail the Goal 1 schema invariant",
+)
+
+assert.throws(
+  () => assertJsonSchema("value", { type: "string", pattern: "^value$" } as JsonSchema),
+  /keyword "pattern"/,
+  "keywords outside the emitted subset fail compilation",
+)
+
+assert.doesNotThrow(
+  () => assertJsonSchema(2, { oneOf: [{ type: "number" }, { const: 1 }] }),
+  "oneOf accepts a value matching exactly one branch",
+)
+assert.throws(
+  () => assertJsonSchema(1, { oneOf: [{ type: "number" }, { const: 1 }] }),
+  "oneOf rejects a value matching more than one branch",
+)
+
+const iconButtonSchema = controlsToJsonSchema(getDef("icon-button")!)
+assert.throws(
+  () => assertJsonSchema({ icon: "none" }, iconButtonSchema),
+  /must not equal "none"/,
+  "the Zod compatibility refinement preserves const exclusion semantics",
+)
 
 console.log(`ops: ${cases.length}/${expectedVariants.length} variants round-tripped; ${ALL_DEFS.length} component schemas compiled`)
