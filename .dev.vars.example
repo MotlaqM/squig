@@ -1,0 +1,7 @@
+# Non-secret resource identifiers only. Wrangler OAuth supplies local CLI auth.
+CLOUDFLARE_ACCOUNT_ID=be8e1a02e385a312f00a0042fc31a1ca
+D1_DATABASE_ID=6764c491-1611-4ae2-aaf4-16a35e9490b5
+AI_GATEWAY_ID=squig-webmcp
+
+# Leave Access unset until the exact allowed emails and public hostname are known.
+# ACCESS_ALLOWED_EMAILS=

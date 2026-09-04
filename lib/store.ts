@@ -278,6 +278,29 @@ interface SquigState {
   loadDoc: (json: string) => boolean
 }
 
+export interface ConnectedHistoryController {
+  undo(): boolean
+  redo(): boolean
+}
+
+let connectedHistoryController: ConnectedHistoryController | null = null
+let remoteDocumentIds = new Set<string>()
+
+/** Connected history is operation-based; the existing snapshots remain the offline fallback. */
+export function setConnectedHistoryController(controller: ConnectedHistoryController | null): void {
+  connectedHistoryController = controller
+}
+
+/** Merge D1's cross-document projection into the local drawer without discarding offline-only files. */
+export function syncRemoteFiles(files: readonly FileMeta[]): void {
+  remoteDocumentIds = new Set(files.map((file) => file.id))
+  useSquig.setState((state) => {
+    const merged = new Map(state.files.map((file) => [file.id, file]))
+    for (const file of files) merged.set(file.id, file)
+    return { files: [...merged.values()].sort((left, right) => right.updatedAt - left.updatedAt) }
+  })
+}
+
 const MAX_HISTORY = 100
 const SAVE_DEBOUNCE_MS = 400
 // the zoom floors, the fit padding and the arithmetic they feed live in
@@ -1236,6 +1259,10 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   undo: () => {
+    if (connectedHistoryController) {
+      connectedHistoryController.undo()
+      return
+    }
     const { past } = get()
     if (!past.length) return
     set((s) => {
@@ -1266,6 +1293,10 @@ export const useSquig = create<SquigState>((set, get) => ({
   },
 
   redo: () => {
+    if (connectedHistoryController) {
+      connectedHistoryController.redo()
+      return
+    }
     const { future } = get()
     if (!future.length) return
     set((s) => {
@@ -1738,6 +1769,26 @@ export const useSquig = create<SquigState>((set, get) => ({
     flushSave(get)
     const doc = readFile(id)
     if (!doc) {
+      const remote = get().files.find((file) => file.id === id)
+      if (remote && remoteDocumentIds.has(id)) {
+        set({
+          docId: id,
+          fileName: remote.name,
+          nodes: {},
+          order: [],
+          selection: [],
+          selectionGroupId: null,
+          croppingId: null,
+          viewport: { x: 0, y: 0, zoom: 1 },
+          renamingFile: false,
+          linkOpen: false,
+          panel: null,
+          past: [],
+          future: [],
+        })
+        nowSeeing(null)
+        return
+      }
       // the index knew about it but the document itself is gone
       set({ files: dropFile(id) })
       return
