@@ -82,6 +82,26 @@ pnpm install
 pnpm dev
 ```
 
+When `NEXT_PUBLIC_SQUIG_WORKER_URL` is configured, the Worker Durable Object is
+the authoritative document store and D1 is only a drawer-metadata projection.
+Browser rename/save requests currently own the D1 row; Agent operations update
+the durable document but do not touch D1 directly. Keeping that projection
+best-effort prevents a D1 outage from rolling back an accepted document edit.
+Copy `.dev.vars.example` to `.dev.vars` for local Worker development; the
+committed Wrangler default is production and fails closed without an Access
+JWT whose signature, issuer, application audience, and expiry validate against
+the configured team JWKS. Set `ACCESS_TEAM_DOMAIN` and
+`ACCESS_APPLICATION_AUD` to their non-secret Access application values before
+production use. The Worker ignores the unverified identity header and derives
+the D1 owner from the verified JWT email claim.
+
+Cross-origin Access deployments must either enable **Bypass OPTIONS requests to
+origin** for the Access application or configure the equivalent Access CORS
+response. The Worker permits an unauthenticated preflight only for the exact
+production `APP_ORIGIN`; every substantive request still requires a valid JWT.
+`ENVIRONMENT=local` additionally accepts the equivalent `localhost` and
+`127.0.0.1` spelling at the configured port.
+
 No environment variables, no database, no accounts — documents live in the
 browser's own storage. `pnpm test` type-checks and runs the geometry,
 selection and clipboard suites; `pnpm lint` and `pnpm build` are the other two

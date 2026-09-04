@@ -1,0 +1,40 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "squig-webmcp-sync",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "account_id": "be8e1a02e385a312f00a0042fc31a1ca",
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "SquigDoc",
+        "class_name": "SquigDoc"
+      }
+    ]
+  },
+  "exports": {
+    "SquigDoc": {
+      "type": "durable-object",
+      "storage": "sqlite"
+    }
+  },
+  "d1_databases": [
+    {
+      "binding": "DOCS_DB",
+      "database_name": "squig-webmcp-docs",
+      "database_id": "6764c491-1611-4ae2-aaf4-16a35e9490b5",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    "AI_GATEWAY_ID": "squig-webmcp",
+    "ACCESS_APPLICATION_AUD": "",
+    "ACCESS_TEAM_DOMAIN": "",
+    "APP_ORIGIN": "http://localhost:3000",
+    "ENVIRONMENT": "production"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

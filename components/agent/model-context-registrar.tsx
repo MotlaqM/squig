@@ -2,6 +2,7 @@
 
 import { useEffect } from "react"
 import { registerSquigTools, type SquigToolRegistration } from "@/lib/agent/tools"
+import { startSquigSync } from "@/lib/agent/sync"
 
 let consumers = 0
 let active: SquigToolRegistration | null = null
@@ -41,7 +42,11 @@ function release() {
 export function ModelContextRegistrar() {
   useEffect(() => {
     void acquire().catch((error) => console.error("Could not register Squig WebMCP tools", error))
-    return release
+    const stopSync = startSquigSync()
+    return () => {
+      stopSync()
+      release()
+    }
   }, [])
 
   return null
