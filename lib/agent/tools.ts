@@ -7,11 +7,13 @@ import { scaleNodes } from "../canvas/transform"
 import { ALL_DEFS, getDef, type Category } from "../library/registry"
 import {
   applyOp,
+  assertJsonSchema,
   componentCatalog,
   controlsToJsonSchema,
   describeDoc,
   describeSelection,
   findNodes,
+  seedFromId,
   validateComponentProps,
   type Doc,
   type JsonSchema,
@@ -19,10 +21,11 @@ import {
   type OpContext,
 } from "../ops/index"
 import { sameValue } from "../ops/value"
-import { unionBounds } from "../selection"
+import { sharedControls, unionBounds } from "../selection"
 import { useSquig } from "../store"
 import {
   ARROW_ANCHORS,
+  screenToWorld,
   unionBox,
   type ArrowAnchor,
   type ArrowNode,
@@ -34,6 +37,7 @@ import {
   type SquigNode,
   type StrokeWeight,
   type TextNode,
+  type Viewport,
 } from "../types"
 import {
   executeToolByName,
@@ -88,7 +92,7 @@ const MUTATION_NAMES = new Set<V1ToolName>([
 const OP_CONTEXT: OpContext = {
   getDef,
   nanoid: () => nanoid(8),
-  seed: stableSeed,
+  seed: seedFromId,
 }
 
 const objectSchema = (properties: Record<string, JsonSchema> = {}, required: string[] = []): JsonSchema => ({
@@ -140,6 +144,12 @@ interface Draft {
   selection: string[]
 }
 
+interface ToolEnvironment {
+  viewport: Viewport
+  viewportWidth: number
+  viewportHeight: number
+}
+
 interface ToolOutcome {
   content: { type: "text"; text: string }[]
   affected: string[]
@@ -156,15 +166,6 @@ function outcome(affected: string[], summary: string, extra: Partial<Omit<ToolOu
 interface ToolCall {
   name: V1ToolName
   arguments?: UnknownRecord
-}
-
-function stableSeed(id = "node"): number {
-  let hash = 2166136261
-  for (let index = 0; index < id.length; index++) {
-    hash ^= id.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
 }
 
 function record(value: unknown, label = "arguments"): UnknownRecord {
@@ -238,14 +239,32 @@ function makeId(doc: Doc): string {
 
 function createNode<T extends SquigNode>(draft: Draft, node: Omit<T, "id" | "seed">): ToolOutcome {
   const id = makeId(draft.doc)
-  const outcome = apply(draft, { t: "add", node: { ...node, id, seed: stableSeed(id) } as T }, [id])
+  const outcome = apply(draft, { t: "add", node: { ...node, id, seed: seedFromId(id) } as T }, [id])
   return { ...outcome, id }
 }
 
-function belowDocument(doc: Doc, height: number): { x: number; y: number } {
-  if (!doc.order.length) return { x: 100, y: 100 }
-  const nodes = doc.order.map((id) => doc.nodes[id]).filter(Boolean)
-  return { x: Math.min(...nodes.map((node) => node.x)), y: Math.max(...nodes.map((node) => node.y + node.h)) + Math.min(80, Math.max(24, height / 4)) }
+function belowVisibleDocument(doc: Doc, environment: ToolEnvironment, size: { w: number; h: number }): { x: number; y: number } {
+  const { viewport, viewportWidth, viewportHeight } = environment
+  const [left, top] = screenToWorld(viewport, 0, 0)
+  const [right, bottom] = screenToWorld(viewport, viewportWidth, viewportHeight)
+  const visible = doc.order
+    .map((id) => doc.nodes[id])
+    .filter((node) => {
+      if (!node) return false
+      const bounds = nodeVisualBounds(node)
+      return bounds.x + bounds.w >= left && bounds.x <= right && bounds.y + bounds.h >= top && bounds.y <= bottom
+    })
+  if (visible.length) {
+    return {
+      x: Math.min(...visible.map((node) => nodeVisualBounds(node).x)),
+      y: Math.max(...visible.map((node) => {
+        const bounds = nodeVisualBounds(node)
+        return bounds.y + bounds.h
+      })) + Math.min(80, Math.max(24, size.h / 4)),
+    }
+  }
+  const [centerX, centerY] = screenToWorld(viewport, viewportWidth / 2, viewportHeight / 2)
+  return { x: centerX - size.w / 2, y: centerY - size.h / 2 }
 }
 
 function resolveArrowEnd(value: unknown, anchorValue: unknown, draft: Draft): { point: [number, number]; id: string | null; anchor: ArrowAnchor | null } {
@@ -261,7 +280,7 @@ function resolveArrowEnd(value: unknown, anchorValue: unknown, draft: Draft): { 
   return { point: [finite(point.x, "x"), finite(point.y, "y")], id: null, anchor: null }
 }
 
-function compileMutation(name: V1ToolName, rawInput: UnknownRecord, draft: Draft): ToolOutcome {
+function compileMutation(name: V1ToolName, rawInput: UnknownRecord, draft: Draft, environment: ToolEnvironment): ToolOutcome {
   switch (name) {
     case "insert_component": {
       exact(rawInput, ["kind", "props", "x", "y", "w", "h"])
@@ -269,7 +288,7 @@ function compileMutation(name: V1ToolName, rawInput: UnknownRecord, draft: Draft
       const def = getDef(kind)
       if (!def) throw new RangeError(`Unknown component kind: ${kind}`)
       const props = rawInput.props === undefined ? {} : record(rawInput.props, "props")
-      const at = belowDocument(draft.doc, def.size.h)
+      const at = belowVisibleDocument(draft.doc, environment, def.size)
       const node: Omit<ComponentNode, "id" | "seed"> = {
         type: "component",
         kind,
@@ -503,21 +522,30 @@ function commitDraft(store: SquigStore, before: Draft, draft: Draft): boolean {
   }) || !sameValue(before.selection, draft.selection)
 }
 
-function runMutation(store: SquigStore, name: V1ToolName, input: UnknownRecord): ToolOutcome {
+function environmentFor(store: SquigStore, ownerWindow: Window): ToolEnvironment {
+  return {
+    viewport: store.getState().viewport,
+    viewportWidth: ownerWindow.innerWidth,
+    viewportHeight: ownerWindow.innerHeight,
+  }
+}
+
+function runMutation(store: SquigStore, ownerWindow: Window, name: V1ToolName, input: UnknownRecord): ToolOutcome {
   const state = store.getState()
   const before: Draft = { doc: currentDoc(store), selection: [...state.selection] }
   const draft: Draft = { doc: before.doc, selection: [...before.selection] }
-  const outcome = compileMutation(name, input, draft)
+  const outcome = compileMutation(name, input, draft, environmentFor(store, ownerWindow))
   commitDraft(store, before, draft)
   return outcome
 }
 
-function runBatch(store: SquigStore, input: UnknownRecord): ToolOutcome {
+function runBatch(store: SquigStore, ownerWindow: Window, input: UnknownRecord): ToolOutcome {
   exact(input, ["ops"])
   if (!Array.isArray(input.ops)) throw new TypeError("ops must be an array")
   const state = store.getState()
   const before: Draft = { doc: currentDoc(store), selection: [...state.selection] }
   const draft: Draft = { doc: before.doc, selection: [...before.selection] }
+  const environment = environmentFor(store, ownerWindow)
   const outputs: ToolOutcome[] = []
 
   for (const rawCall of input.ops) {
@@ -525,12 +553,13 @@ function runBatch(store: SquigStore, input: UnknownRecord): ToolOutcome {
     if (!MUTATION_NAMES.has(call.name) && call.name !== "select") {
       throw new TypeError(`batch supports document mutations and select, not ${call.name}`)
     }
+    if (call.name !== "set_props") assertJsonSchema(call.arguments ?? {}, SCHEMAS[call.name])
     if (call.name === "select") {
       exact(call.arguments ?? {}, ["ids"])
       draft.selection = resolveIds(call.arguments?.ids, draft)
       outputs.push(outcome([], `select: ${draft.selection.length} nodes`, { ids: [...draft.selection] }))
     } else {
-      outputs.push(compileMutation(call.name, call.arguments ?? {}, draft))
+      outputs.push(compileMutation(call.name, call.arguments ?? {}, draft, environment))
     }
   }
 
@@ -580,7 +609,7 @@ function parseBox(value: unknown): { x: number; y: number; w: number; h: number 
 
 function executeStatic(store: SquigStore, ownerWindow: Window, name: Exclude<V1ToolName, "set_props">, input: UnknownRecord): unknown {
   if (["get_document", "get_selection", "find_nodes", "list_components"].includes(name)) return readTool(store, name, input)
-  if (MUTATION_NAMES.has(name)) return runMutation(store, name, input)
+  if (MUTATION_NAMES.has(name)) return runMutation(store, ownerWindow, name, input)
   const state = store.getState()
   switch (name) {
     case "select": {
@@ -609,7 +638,7 @@ function executeStatic(store: SquigStore, ownerWindow: Window, name: Exclude<V1T
       exact(input, [])
       state.redo()
       return outcome([], "redo")
-    case "batch": return runBatch(store, input)
+    case "batch": return runBatch(store, ownerWindow, input)
     default: throw new RangeError(`Unknown static tool: ${name}`)
   }
 }
@@ -624,6 +653,11 @@ function eligibleComponentSelection(store: SquigStore): { kind: string; nodes: C
   return components.every((node) => node.kind === kind) ? { kind, nodes: components } : null
 }
 
+function sharedPropsSchema(eligible: { kind: string; nodes: ComponentNode[] }): JsonSchema {
+  const def = getDef(eligible.kind)!
+  return controlsToJsonSchema(def, eligible.nodes[0], sharedControls(eligible.nodes))
+}
+
 function staticDefinition(store: SquigStore, ownerWindow: Window, name: Exclude<V1ToolName, "set_props">): ModelContextTool {
   return {
     name,
@@ -631,22 +665,28 @@ function staticDefinition(store: SquigStore, ownerWindow: Window, name: Exclude<
     description: `Squig ${name.replaceAll("_", " ")}`,
     inputSchema: SCHEMAS[name],
     annotations: { readOnlyHint: ["get_document", "get_selection", "find_nodes", "list_components"].includes(name) },
-    execute: (input) => executeStatic(store, ownerWindow, name, record(input)),
+    execute: (input) => {
+      assertJsonSchema(input, SCHEMAS[name])
+      return executeStatic(store, ownerWindow, name, record(input))
+    },
   }
 }
 
-function dynamicPropsDefinition(store: SquigStore, eligible: { kind: string; nodes: ComponentNode[] }): ModelContextTool {
+function dynamicPropsDefinition(store: SquigStore, ownerWindow: Window, eligible: { kind: string; nodes: ComponentNode[] }): ModelContextTool {
   const def = getDef(eligible.kind)!
-  const representative = eligible.nodes[0]
+  const inputSchema = objectSchema({
+    ids: idsSchema,
+    props: sharedPropsSchema(eligible),
+  }, ["ids", "props"])
   return {
     name: "set_props",
     title: `set ${def.name} props`,
     description: `Set properties shared by the selected ${def.name} component${eligible.nodes.length === 1 ? "" : "s"}`,
-    inputSchema: objectSchema({
-      ids: idsSchema,
-      props: controlsToJsonSchema(def, representative),
-    }, ["ids", "props"]),
-    execute: (input) => runMutation(store, "set_props", record(input)),
+    inputSchema,
+    execute: (input) => {
+      assertJsonSchema(input, inputSchema)
+      return runMutation(store, ownerWindow, "set_props", record(input))
+    },
   }
 }
 
@@ -677,7 +717,7 @@ export async function registerSquigTools(
     if (disposed) return
     const eligible = eligibleComponentSelection(store)
     const nextSignature = eligible
-      ? `${eligible.kind}:${JSON.stringify(controlsToJsonSchema(getDef(eligible.kind)!, eligible.nodes[0]))}`
+      ? `${eligible.kind}:${JSON.stringify(sharedPropsSchema(eligible))}`
       : null
     if (nextSignature === dynamicSignature) return
     dynamicController?.abort()
@@ -686,7 +726,7 @@ export async function registerSquigTools(
     if (!eligible) return
     const controller = new AbortController()
     dynamicController = controller
-    await context.registerTool(dynamicPropsDefinition(store, eligible), { signal: controller.signal })
+    await context.registerTool(dynamicPropsDefinition(store, targetWindow, eligible), { signal: controller.signal })
   }
   const refresh = () => {
     queue = queue.then(refreshNow)

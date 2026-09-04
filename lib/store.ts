@@ -48,7 +48,8 @@ import {
 } from "./files"
 import { planTabSync } from "./tabs"
 import { DEFAULT_BIG_NUDGE, normalizeBigNudge } from "./nudge"
-import { applyOp, type Op, type OpContext, type OpResult } from "./ops/index"
+import { applyOp, seedFromId, type Op, type OpContext, type OpResult } from "./ops/index"
+import { sameValue } from "./ops/value"
 
 // ---------------------------------------------------------------------------
 // Store — flat node map + z-order, selection, viewport, tool, history.
@@ -346,32 +347,6 @@ function stampSelAfter(past: DocSnapshot[], selection: string[], selectionGroupI
 type DocFields = Pick<SquigState, "nodes" | "order">
 
 /**
- * Two values that say the same thing about the drawing.
- *
- * Only ever reached for the handful of nodes an edit rewrote, so the walk is
- * small; `points` and `props` are the deepest anything here goes.
- *
- * A key holding `undefined` counts as a key that isn't there, because that is
- * how this store spells taking something away — `{ locked: undefined }`,
- * `{ link: undefined }` — and clearing a link off a layer that never had one
- * draws exactly the same picture it did a moment ago.
- */
-function sameValue(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (Array.isArray(a) || Array.isArray(b)) {
-    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
-    return a.every((v, i) => sameValue(v, b[i]))
-  }
-  if (!a || !b || typeof a !== "object" || typeof b !== "object") return false
-  const ra = a as Record<string, unknown>
-  const rb = b as Record<string, unknown>
-  const ka = Object.keys(ra).filter((k) => ra[k] !== undefined)
-  const kb = Object.keys(rb).filter((k) => rb[k] !== undefined)
-  if (ka.length !== kb.length) return false
-  return ka.every((k) => sameValue(ra[k], rb[k]))
-}
-
-/**
  * Did anything actually change?
  *
  * Cheap because it barely ever deep-compares: every write in this store
@@ -491,7 +466,7 @@ const freshSeed = () => Math.floor(Math.random() * 2 ** 31)
 const STORE_OP_CONTEXT: OpContext = {
   getDef,
   nanoid: () => nanoid(8),
-  seed: freshSeed,
+  seed: seedFromId,
 }
 
 /**

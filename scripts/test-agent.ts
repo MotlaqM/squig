@@ -141,6 +141,51 @@ const registration = await registerSquigTools(
   check("registration installs document.modelContext", (browserDocument as FakeDocument & { modelContext?: unknown }).modelContext === registration.context)
 }
 
+{
+  const visible: SquigNode = { id: "visible", type: "shape", shape: "rect", fill: "none", x: 40, y: 100, w: 80, h: 20, seed: 1 }
+  const distant: SquigNode = { id: "distant", type: "shape", shape: "rect", fill: "none", x: 20, y: 10_000, w: 80, h: 20, seed: 2 }
+  reset({ visible, distant }, ["visible", "distant"])
+  useSquig.setState({ viewport: { x: 0, y: 0, zoom: 1 } })
+  await registration.refresh()
+  const result = await execute("insert_component", { kind: "button" })
+  const inserted = state().nodes[result.id as string]
+  check("omitted x starts with the visible layers", inserted.x === 40, `x=${inserted.x}`)
+  check("omitted y lands below the lowest visible layer", inserted.y === 144, `y=${inserted.y}`)
+}
+
+// Generated component constraints are enforced before any store write.
+{
+  reset()
+  await registration.refresh()
+  const beforeDoc = docJson()
+  const beforeHistory = JSON.stringify({ past: state().past, future: state().future })
+  await rejects("generated icon schema rejects an empty name", () => execute("insert_component", {
+    kind: "button",
+    props: { icon: "left", glyph: "" },
+    x: 0,
+    y: 0,
+  }))
+  check("invalid icon leaves the document untouched", docJson() === beforeDoc)
+  check("invalid icon leaves history untouched", JSON.stringify({ past: state().past, future: state().future }) === beforeHistory)
+}
+
+{
+  const invalidCalls: [string, string, Record<string, unknown>][] = [
+    ["enum", "insert_component", { kind: "image", props: { style: "painted" }, x: 0, y: 0 }],
+    ["type", "insert_component", { kind: "card", props: { image: "yes" }, x: 0, y: 0 }],
+    ["additionalProperties", "add_shape", { shape: "rect", x: 0, y: 0, w: 20, h: 20, mystery: true }],
+  ]
+  for (const [constraint, name, args] of invalidCalls) {
+    reset()
+    await registration.refresh()
+    const beforeDoc = docJson()
+    const beforeHistory = JSON.stringify({ past: state().past, future: state().future })
+    await rejects(`runtime schema rejects ${constraint} violations`, () => execute(name, args))
+    check(`${constraint} rejection leaves the document untouched`, docJson() === beforeDoc)
+    check(`${constraint} rejection leaves history untouched`, JSON.stringify({ past: state().past, future: state().future }) === beforeHistory)
+  }
+}
+
 // A card proves exact string/boolean keys. It deliberately has no enum control.
 {
   reset()
@@ -170,6 +215,37 @@ const registration = await registerSquigTools(
   const propsTool = (await registration.context.getTools()).find((tool) => tool.name === "set_props")!
   const schema = propsTool.inputSchema as { properties: { props: { properties: Record<string, { enum?: unknown[] }> } } }
   check("image select compiles to an enum", schema.properties.props.properties.style.enum?.join(",") === "plain,crossed")
+}
+
+// Conditional controls must be shared by every selected component, not copied
+// from whichever same-kind node happens to come first in document order.
+{
+  reset()
+  await registration.refresh()
+  const withIcon = (await execute("insert_component", {
+    kind: "button",
+    props: { icon: "left", glyph: "plus" },
+    x: 0,
+    y: 0,
+  })).id as string
+  const withoutIcon = (await execute("insert_component", { kind: "button", x: 180, y: 0 })).id as string
+  await execute("select", { ids: [withIcon, withoutIcon] })
+  await registration.refresh()
+  const propsTool = (await registration.context.getTools()).find((tool) => tool.name === "set_props")!
+  const schema = propsTool.inputSchema as { properties: { props: { properties: Record<string, unknown> } } }
+  check("mixed conditional state advertises only shared controls", Object.keys(schema.properties.props.properties).sort().join(",") === "icon,label,size,variant")
+
+  const beforeDoc = docJson()
+  const beforeHistory = JSON.stringify({ past: state().past, future: state().future })
+  await rejects("mixed conditional state rejects its unshared control", () => execute("set_props", { ids: "selection", props: { glyph: "star" } }))
+  check("unshared prop rejection leaves document untouched", docJson() === beforeDoc)
+  check("unshared prop rejection leaves history untouched", JSON.stringify({ past: state().past, future: state().future }) === beforeHistory)
+
+  await execute("set_props", { ids: "selection", props: { label: "Shared" } })
+  check(
+    "shared prop execution updates every selected component",
+    [withIcon, withoutIcon].every((id) => (state().nodes[id] as { props?: { label?: string } }).props?.label === "Shared")
+  )
 }
 
 // Locked targets are rejected before a document or history write.

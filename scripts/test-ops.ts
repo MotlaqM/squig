@@ -105,6 +105,22 @@ for (const op of noOps) {
   assert.equal(applyOp(doc, op, context).doc, doc, `${op.t} no-op preserves document identity`)
 }
 
+{
+  const doc = fixture()
+  const injected: OpContext = {
+    getDef,
+    nanoid: () => "context-id",
+    seed: (id) => id === "a-context-copy" ? 424_242 : 7,
+  }
+  const result = applyOp(doc, {
+    t: "duplicate",
+    ids: ["a"],
+    offset: [10, 20],
+    idMap: { a: "a-context-copy" },
+  }, injected).doc
+  assert.equal(result.nodes["a-context-copy"].seed, 424_242, "duplicate seeds come from the injected OpContext")
+}
+
 // A duplicate is a serialized command: replaying it cannot consult whichever
 // RNG happens to be installed in the process doing the replay.
 {
@@ -133,8 +149,9 @@ for (const op of noOps) {
     offset: [25, 30],
     idMap: { left: "left-2", connector: "connector-2", right: "right-2" },
   }
-  const noisyA: OpContext = { getDef, nanoid: () => "rng-a", seed: () => 1 }
-  const noisyB: OpContext = { getDef, nanoid: () => "rng-b", seed: () => 999_999 }
+  const replaySeed = (id?: string) => [...(id ?? "seed")].reduce((sum, char) => sum + char.charCodeAt(0), 0)
+  const noisyA: OpContext = { getDef, nanoid: () => "rng-a", seed: replaySeed }
+  const noisyB: OpContext = { getDef, nanoid: () => "rng-b", seed: replaySeed }
   const first = applyOp(doc, op, noisyA).doc
   const second = applyOp(doc, op, noisyB).doc
   assert.deepEqual(second, first, "serialized duplicate replays identically under different RNG contexts")

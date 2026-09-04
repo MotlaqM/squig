@@ -75,7 +75,7 @@ function stableGroupId(idMap: Record<string, string>, sequence: number): string 
   return `${first}:g${sequence}`
 }
 
-function duplicate(doc: Doc, op: Extract<Op, { t: "duplicate" }>): { nodes: Record<string, SquigNode>; order: string[] } {
+function duplicate(doc: Doc, op: Extract<Op, { t: "duplicate" }>, ctx: OpContext): { nodes: Record<string, SquigNode>; order: string[] } {
   const sources = existingIds(doc, op.ids).map((id) => doc.nodes[id])
   if (!sources.length) return doc
 
@@ -95,7 +95,7 @@ function duplicate(doc: Doc, op: Extract<Op, { t: "duplicate" }>): { nodes: Reco
     clone.id = op.idMap[source.id]
     clone.x += op.offset[0]
     clone.y += op.offset[1]
-    clone.seed = stableSeed(clone.id)
+    clone.seed = ctx.seed(clone.id)
     clone.locked = undefined
     clone.groupIds = groups.paths.get(source.id)
     return clone
@@ -118,15 +118,6 @@ function duplicate(doc: Doc, op: Extract<Op, { t: "duplicate" }>): { nodes: Reco
     ...Object.fromEntries(clones.map((clone) => [clone.id, clone])),
   })
   return { nodes: settleBinds(nodes), order: orderWithClones(doc.order, sources, clones) }
-}
-
-function stableSeed(id: string): number {
-  let hash = 2166136261
-  for (let index = 0; index < id.length; index++) {
-    hash ^= id.charCodeAt(index)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
 }
 
 function alignPatches(doc: Doc, ids: readonly string[], edge: Edge): Record<string, Partial<SquigNode>> {
@@ -223,8 +214,7 @@ function affectedIds(before: Doc, after: Doc): string[] {
 }
 
 /** Pure document transition. It has no store, DOM, or window dependency. */
-export function applyOp(doc: Doc, op: Op, _ctx: OpContext): OpResult {
-  void _ctx
+export function applyOp(doc: Doc, op: Op, ctx: OpContext): OpResult {
   let nodes = doc.nodes
   let order = doc.order
 
@@ -305,7 +295,7 @@ export function applyOp(doc: Doc, op: Op, _ctx: OpContext): OpResult {
       nodes = patchNodes(nodes, Object.fromEntries(existingIds(doc, op.ids).map((id) => [id, { locked: op.locked || undefined }])))
       break
     case "duplicate": {
-      const next = duplicate(doc, op)
+      const next = duplicate(doc, op, ctx)
       nodes = next.nodes
       order = next.order
       break

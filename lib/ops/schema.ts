@@ -20,6 +20,99 @@ export interface JsonSchema {
   default?: unknown
 }
 
+function jsonEqual(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => jsonEqual(value, right[index]))
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord)
+  const rightKeys = Object.keys(rightRecord)
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => key in rightRecord && jsonEqual(leftRecord[key], rightRecord[key]))
+}
+
+function matchesType(value: unknown, type: string): boolean {
+  switch (type) {
+    case "object": return !!value && typeof value === "object" && !Array.isArray(value)
+    case "array": return Array.isArray(value)
+    case "string": return typeof value === "string"
+    case "number": return typeof value === "number" && Number.isFinite(value)
+    case "integer": return typeof value === "number" && Number.isInteger(value)
+    case "boolean": return typeof value === "boolean"
+    case "null": return value === null
+    default: return false
+  }
+}
+
+function schemaError(path: string, message: string): TypeError {
+  return new TypeError(`${path} ${message}`)
+}
+
+/** Validate the complete JSON Schema subset emitted and declared by Goal 1. */
+export function assertJsonSchema(value: unknown, schema: JsonSchema, path = "arguments"): void {
+  if (schema.oneOf) {
+    let matches = 0
+    for (const candidate of schema.oneOf) {
+      try {
+        assertJsonSchema(value, candidate, path)
+        matches++
+      } catch {
+        // A oneOf branch mismatch is expected; exactly one branch must survive.
+      }
+    }
+    if (matches !== 1) throw schemaError(path, "must match exactly one allowed shape")
+  }
+
+  if (schema.not) {
+    let excluded = true
+    try {
+      assertJsonSchema(value, schema.not, path)
+    } catch {
+      excluded = false
+    }
+    if (excluded) throw schemaError(path, "uses an excluded value")
+  }
+
+  if (schema.const !== undefined && !jsonEqual(value, schema.const)) throw schemaError(path, `must equal ${JSON.stringify(schema.const)}`)
+  if (schema.enum && !schema.enum.some((candidate) => jsonEqual(value, candidate))) {
+    throw schemaError(path, `must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(", ")}`)
+  }
+
+  if (schema.type) {
+    const types = Array.isArray(schema.type) ? schema.type : [schema.type]
+    if (!types.some((type) => matchesType(value, type))) throw schemaError(path, `must be ${types.join(" or ")}`)
+  }
+
+  if (typeof value === "string" && schema.minLength !== undefined && [...value].length < schema.minLength) {
+    throw schemaError(path, `must contain at least ${schema.minLength} character${schema.minLength === 1 ? "" : "s"}`)
+  }
+  if (typeof value === "number") {
+    if (schema.minimum !== undefined && value < schema.minimum) throw schemaError(path, `must be at least ${schema.minimum}`)
+    if (schema.maximum !== undefined && value > schema.maximum) throw schemaError(path, `must be at most ${schema.maximum}`)
+  }
+
+  if (Array.isArray(value) && schema.items) {
+    value.forEach((item, index) => assertJsonSchema(item, schema.items!, `${path}[${index}]`))
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const object = value as Record<string, unknown>
+    for (const key of schema.required ?? []) {
+      if (!(key in object)) throw schemaError(path, `requires ${key}`)
+    }
+    const properties = schema.properties ?? {}
+    if (schema.additionalProperties === false) {
+      const unknown = Object.keys(object).find((key) => !(key in properties))
+      if (unknown) throw schemaError(`${path}.${unknown}`, "is not allowed")
+    }
+    for (const [key, property] of Object.entries(properties)) {
+      if (key in object) assertJsonSchema(object[key], property, `${path}.${key}`)
+    }
+  }
+}
+
 function schemaForControl(control: ControlDef, defaultValue: unknown): JsonSchema {
   const base: JsonSchema = { title: control.label }
   if (defaultValue !== undefined) base.default = defaultValue
@@ -48,7 +141,11 @@ function schemaForControl(control: ControlDef, defaultValue: unknown): JsonSchem
 }
 
 /** Compile the same controls the inspector uses into a partial props schema. */
-export function controlsToJsonSchema(def: ComponentDef, node?: ComponentNode): JsonSchema {
+export function controlsToJsonSchema(
+  def: ComponentDef,
+  node?: ComponentNode,
+  controls: readonly ControlDef[] = def.controls
+): JsonSchema {
   const effectiveNode: ComponentNode = node ?? {
     type: "component",
     id: "schema",
@@ -61,7 +158,7 @@ export function controlsToJsonSchema(def: ComponentDef, node?: ComponentNode): J
     seed: 0,
   }
   const properties: Record<string, JsonSchema> = {}
-  for (const control of def.controls) {
+  for (const control of controls) {
     if (!controlIsVisible(effectiveNode, control)) continue
     const value = control.key in effectiveNode.props ? effectiveNode.props[control.key] : def.defaults[control.key]
     properties[control.key] = schemaForControl(control, value)
@@ -76,19 +173,6 @@ export function validateComponentProps(
   node?: ComponentNode
 ): Record<string, unknown> {
   const schema = controlsToJsonSchema(def, node)
-  const properties = schema.properties ?? {}
-  for (const [key, value] of Object.entries(props)) {
-    const property = properties[key]
-    if (!property) throw new TypeError(`Unknown ${def.kind} property: ${key}`)
-    if (property.type === "string" && typeof value !== "string") throw new TypeError(`${key} must be a string`)
-    if (property.type === "boolean" && typeof value !== "boolean") throw new TypeError(`${key} must be a boolean`)
-    if (property.type === "number") {
-      if (typeof value !== "number" || !Number.isFinite(value)) throw new TypeError(`${key} must be a finite number`)
-      if (property.minimum !== undefined && value < property.minimum) throw new RangeError(`${key} must be at least ${property.minimum}`)
-      if (property.maximum !== undefined && value > property.maximum) throw new RangeError(`${key} must be at most ${property.maximum}`)
-    }
-    if (property.enum && !property.enum.includes(value)) throw new TypeError(`${key} must be one of ${property.enum.join(", ")}`)
-    if (property.not?.const !== undefined && Object.is(value, property.not.const)) throw new TypeError(`${key} cannot be ${String(value)}`)
-  }
+  assertJsonSchema(props, schema, `${def.kind} props`)
   return props
 }
