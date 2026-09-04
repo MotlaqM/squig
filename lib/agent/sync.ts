@@ -6,6 +6,7 @@ import { seedFromId } from "../ops/context"
 import type { Doc, Op, OpContext } from "../ops/types"
 import { sameValue } from "../ops/value"
 import { validDocument } from "./validate"
+import { loadPendingIntents, savePendingIntents } from "./journal"
 import {
   applyAuthoritativeDocument,
   isAuthoritativeDocumentUpdate,
@@ -30,7 +31,6 @@ export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protoc
 
 const LOCAL_WORKER_URL = "http://127.0.0.1:8787"
 export const MAX_CONNECTED_HISTORY = 100
-export const MAX_QUEUED_HISTORY_ACTIONS = 100
 
 const CLIENT_CONTEXT: OpContext = {
   getDef: () => undefined,
@@ -39,8 +39,15 @@ const CLIENT_CONTEXT: OpContext = {
 }
 
 interface PendingCommand { ops: Op[]; clientSeq: number; blocked: boolean }
-interface HistoryEntry { before: Doc; after: Doc }
-type HistoryAction = "undo" | "redo"
+interface ValueState { present: boolean; value?: unknown }
+type NodeTransition =
+  | { kind: "add"; id: string; node: SquigNode }
+  | { kind: "remove"; id: string; node: SquigNode }
+  | { kind: "patch"; id: string; fields: Array<{ key: string; before: ValueState; after: ValueState }> }
+interface HistoryEntry {
+  nodes: NodeTransition[]
+  order?: { before: string[]; after: string[] }
+}
 
 export interface SyncError {
   code: "command_too_large" | "server_rejected"
@@ -51,9 +58,11 @@ export interface SyncError {
 export interface SquigSyncCoreOptions {
   clientId: string
   initialDoc: Doc
+  initialPendingIntents?: Op[][]
   send(message: ClientOpCommand | { type: "resync"; clientId: string }): void
   show(doc: Doc): void
   onError?(error: SyncError | null): void
+  onPendingIntents?(intents: Op[][]): void
 }
 
 function cloneWire<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T }
@@ -134,44 +143,87 @@ function hasOwn(value: object, key: string): boolean {
   return Object.prototype.hasOwnProperty.call(value, key)
 }
 
-/** Revert only document fields that still equal the result of the original edit. */
-export function conditionalTransitionOps(current: Doc, expected: Doc, wanted: Doc): Op[] {
+function hasDefined(value: Record<string, unknown>, key: string): boolean {
+  return hasOwn(value, key) && value[key] !== undefined
+}
+
+function valueState(record: Record<string, unknown>, key: string): ValueState {
+  return hasDefined(record, key) ? { present: true, value: cloneWire(record[key]) } : { present: false }
+}
+
+/** Capture only changed nodes and fields, retaining no reference to the source documents. */
+function transitionBetween(before: Doc, after: Doc): HistoryEntry {
+  const nodes: NodeTransition[] = []
+  const nodeIds = new Set([...Object.keys(before.nodes), ...Object.keys(after.nodes)])
+  for (const id of nodeIds) {
+    const left = before.nodes[id]
+    const right = after.nodes[id]
+    if (!left && right) {
+      nodes.push({ kind: "add", id, node: cloneWire(right) })
+      continue
+    }
+    if (left && !right) {
+      nodes.push({ kind: "remove", id, node: cloneWire(left) })
+      continue
+    }
+    if (!left || !right || sameValue(left, right)) continue
+    const leftRecord = left as unknown as Record<string, unknown>
+    const rightRecord = right as unknown as Record<string, unknown>
+    const fields = [...new Set([...Object.keys(leftRecord), ...Object.keys(rightRecord)])]
+      .filter((key) => {
+        const leftHas = hasDefined(leftRecord, key)
+        const rightHas = hasDefined(rightRecord, key)
+        return leftHas !== rightHas || (leftHas && !sameValue(leftRecord[key], rightRecord[key]))
+      })
+      .map((key) => ({ key, before: valueState(leftRecord, key), after: valueState(rightRecord, key) }))
+    if (fields.length) nodes.push({ kind: "patch", id, fields })
+  }
+  return {
+    nodes,
+    ...(!sameValue(before.order, after.order) ? { order: { before: [...before.order], after: [...after.order] } } : {}),
+  }
+}
+
+function stateMatches(record: Record<string, unknown>, key: string, expected: ValueState): boolean {
+  const present = hasDefined(record, key)
+  return present === expected.present && (!present || sameValue(record[key], expected.value))
+}
+
+/** Apply a compact transition only where the expected values still match. */
+function conditionalTransitionOps(current: Doc, transition: HistoryEntry, direction: "forward" | "backward"): Op[] {
   const nodes: Record<string, SquigNode> = { ...current.nodes }
-  const nodeIds = new Set([...Object.keys(expected.nodes), ...Object.keys(wanted.nodes)])
-
-  for (const nodeId of nodeIds) {
-    const currentNode = current.nodes[nodeId]
-    const expectedNode = expected.nodes[nodeId]
-    const wantedNode = wanted.nodes[nodeId]
-    if (expectedNode && !wantedNode) {
-      if (currentNode && sameValue(currentNode, expectedNode)) delete nodes[nodeId]
+  for (const change of transition.nodes) {
+    if (change.kind === "add" || change.kind === "remove") {
+      const forwardAdds = change.kind === "add"
+      const expected = direction === "forward" ? (forwardAdds ? undefined : change.node) : (forwardAdds ? change.node : undefined)
+      const wanted = direction === "forward" ? (forwardAdds ? change.node : undefined) : (forwardAdds ? undefined : change.node)
+      const currentNode = nodes[change.id]
+      if (expected ? !!currentNode && sameValue(currentNode, expected) : !currentNode) {
+        if (wanted) nodes[change.id] = cloneWire(wanted)
+        else delete nodes[change.id]
+      }
       continue
     }
-    if (!expectedNode && wantedNode) {
-      if (!currentNode) nodes[nodeId] = cloneWire(wantedNode)
-      continue
-    }
-    if (!currentNode || !expectedNode || !wantedNode) continue
-
+    const currentNode = nodes[change.id]
+    if (!currentNode) continue
     const next = { ...currentNode } as unknown as Record<string, unknown>
     const currentRecord = currentNode as unknown as Record<string, unknown>
-    const expectedRecord = expectedNode as unknown as Record<string, unknown>
-    const wantedRecord = wantedNode as unknown as Record<string, unknown>
-    const fields = new Set([...Object.keys(expectedRecord), ...Object.keys(wantedRecord)])
-    for (const field of fields) {
-      const currentHas = hasOwn(currentRecord, field)
-      const expectedHas = hasOwn(expectedRecord, field)
-      if (currentHas !== expectedHas || (currentHas && !sameValue(currentRecord[field], expectedRecord[field]))) continue
-      if (hasOwn(wantedRecord, field)) next[field] = cloneWire(wantedRecord[field])
-      else delete next[field]
+    for (const field of change.fields) {
+      const expected = direction === "forward" ? field.before : field.after
+      const wanted = direction === "forward" ? field.after : field.before
+      if (!stateMatches(currentRecord, field.key, expected)) continue
+      if (wanted.present) next[field.key] = cloneWire(wanted.value)
+      else delete next[field.key]
     }
-    nodes[nodeId] = next as unknown as SquigNode
+    nodes[change.id] = next as unknown as SquigNode
   }
 
-  const completeOrder = (sameValue(current.order, expected.order) ? wanted.order : current.order)
+  const expectedOrder = transition.order?.[direction === "forward" ? "before" : "after"]
+  const wantedOrder = transition.order?.[direction === "forward" ? "after" : "before"]
+  const completeOrder = (expectedOrder && wantedOrder && sameValue(current.order, expectedOrder) ? wantedOrder : current.order)
     .filter((nodeId) => !!nodes[nodeId])
   const ordered = new Set(completeOrder)
-  for (const source of [current.order, wanted.order, Object.keys(nodes)]) {
+  for (const source of [current.order, wantedOrder ?? [], Object.keys(nodes)]) {
     for (const nodeId of source) {
       if (nodes[nodeId] && !ordered.has(nodeId)) {
         completeOrder.push(nodeId)
@@ -180,6 +232,10 @@ export function conditionalTransitionOps(current: Doc, expected: Doc, wanted: Do
     }
   }
   return diffDocs(current, { nodes, order: completeOrder })
+}
+
+function transitionBytes(entries: readonly HistoryEntry[]): number {
+  return new TextEncoder().encode(JSON.stringify(entries)).byteLength
 }
 
 function empty(doc: Doc): boolean { return doc.order.length === 0 && Object.keys(doc.nodes).length === 0 }
@@ -246,6 +302,7 @@ export class SquigSyncCore {
   private readonly send: SquigSyncCoreOptions["send"]
   private readonly show: SquigSyncCoreOptions["show"]
   private readonly onError?: SquigSyncCoreOptions["onError"]
+  private readonly onPendingIntents?: SquigSyncCoreOptions["onPendingIntents"]
   private baseDoc: Doc = { nodes: {}, order: [] }
   private visibleDoc: Doc
   private serverRev = 0
@@ -255,8 +312,7 @@ export class SquigSyncCore {
   private inFlight: number | null = null
   private history: HistoryEntry[] = []
   private redoHistory: HistoryEntry[] = []
-  private preSnapshotGroups: Op[][] = []
-  private historyRequests: HistoryAction[] = []
+  private preSnapshotGroups: Op[][]
   private ready = false
   private transportOpen = false
   private paused = false
@@ -269,6 +325,8 @@ export class SquigSyncCore {
     this.send = options.send
     this.show = options.show
     this.onError = options.onError
+    this.onPendingIntents = options.onPendingIntents
+    this.preSnapshotGroups = cloneWire(options.initialPendingIntents ?? [])
   }
 
   setTransportOpen(open: boolean) {
@@ -297,20 +355,34 @@ export class SquigSyncCore {
         this.enqueue(bootstrap)
         rebasedDoc = applyOps(rebasedDoc, bootstrap)
       }
-      const rebasedHistory: HistoryEntry[] = []
+      const rebased: Array<{ ops: Op[]; transition: HistoryEntry }> = []
+      let journalValid = true
       for (const ops of localGroups) {
-        const next = applyOps(rebasedDoc, ops)
+        let next: Doc
+        try {
+          next = applyOps(rebasedDoc, ops)
+        } catch {
+          journalValid = false
+          break
+        }
+        if (!validDocument(next)) {
+          journalValid = false
+          break
+        }
         if (!sameValue(rebasedDoc, next)) {
-          rebasedHistory.push({ before: rebasedDoc, after: next })
-          this.enqueue(ops)
+          rebased.push({ ops, transition: transitionBetween(rebasedDoc, next) })
           rebasedDoc = next
         }
       }
-      this.history = rebasedHistory.slice(-MAX_CONNECTED_HISTORY)
+      if (!journalValid) {
+        rebased.length = 0
+      }
+      for (const item of rebased) this.enqueue(item.ops)
+      this.history = rebased.map((item) => item.transition).slice(-MAX_CONNECTED_HISTORY)
       this.redoHistory = []
       this.rebuildVisible()
       this.present()
-      this.drainHistoryRequests()
+      this.persistPendingIntents()
       this.flush()
       return true
     }
@@ -322,7 +394,7 @@ export class SquigSyncCore {
       this.fail({ code: "server_rejected", message: "The server rejected this edit. Your local document is preserved; retry will rebuild it against the latest snapshot.", retryable: true })
     } else this.clearError()
     this.rebuildVisible()
-    this.drainHistoryRequests()
+    this.persistPendingIntents()
     this.flush()
     return true
   }
@@ -347,7 +419,7 @@ export class SquigSyncCore {
       this.clearError()
     }
     this.rebuildVisible()
-    this.drainHistoryRequests()
+    this.persistPendingIntents()
     this.flush()
   }
 
@@ -374,12 +446,10 @@ export class SquigSyncCore {
   }
 
   undo(): boolean {
-    if (!this.ready || this.paused) return this.queueHistory("undo")
     return this.performUndo()
   }
 
   redo(): boolean {
-    if (!this.ready || this.paused) return this.queueHistory("redo")
     return this.performRedo()
   }
 
@@ -392,7 +462,7 @@ export class SquigSyncCore {
     this.clearError()
     this.enqueue(diffDocs(this.baseDoc, wanted))
     this.rebuildVisible()
-    this.drainHistoryRequests()
+    this.persistPendingIntents()
     this.flush()
     return !this.paused
   }
@@ -409,7 +479,11 @@ export class SquigSyncCore {
       inFlight: this.inFlight,
       historyDepth: this.history.length,
       redoDepth: this.redoHistory.length,
-      queuedHistoryActions: [...this.historyRequests],
+      historyBytes: transitionBytes(this.history),
+      historyChanges: this.history.reduce((total, entry) => total + entry.nodes.reduce(
+        (count, change) => count + (change.kind === "patch" ? change.fields.length : 1),
+        0
+      ) + (entry.order ? 1 : 0), 0),
       ready: this.ready,
       error: this.error,
     }
@@ -417,35 +491,25 @@ export class SquigSyncCore {
 
   private recordLocal(forwardOps: Op[], docBefore: Doc) {
     const next = applyOps(docBefore, forwardOps)
+    const declarativeOps = diffDocs(docBefore, next)
+    if (!declarativeOps.length) return this.present()
     this.visibleDoc = next
     this.show(cloneWire(next))
-    this.history.push({ before: cloneWire(docBefore), after: cloneWire(next) })
+    this.history.push(transitionBetween(docBefore, next))
     this.history = this.history.slice(-MAX_CONNECTED_HISTORY)
     this.redoHistory = []
     if (!this.ready) {
-      this.preSnapshotGroups.push(forwardOps)
+      this.preSnapshotGroups.push(declarativeOps)
+      this.persistPendingIntents()
       return
     }
-    this.enqueue(forwardOps)
-  }
-
-  private queueHistory(action: HistoryAction): boolean {
-    if (this.historyRequests.length < MAX_QUEUED_HISTORY_ACTIONS) this.historyRequests.push(action)
-    return true
-  }
-
-  private drainHistoryRequests() {
-    while (this.ready && !this.paused && !this.pending.length && this.inFlight === null && this.historyRequests.length) {
-      const action = this.historyRequests.shift()!
-      if (action === "undo") this.performUndo()
-      else this.performRedo()
-    }
+    this.enqueue(declarativeOps)
   }
 
   private performUndo(): boolean {
     const entry = this.history.pop()
     if (!entry) return false
-    const ops = conditionalTransitionOps(this.visibleDoc, entry.after, entry.before)
+    const ops = conditionalTransitionOps(this.visibleDoc, entry, "backward")
     if (!ops.length) return true
     this.redoHistory.push(entry)
     this.redoHistory = this.redoHistory.slice(-MAX_CONNECTED_HISTORY)
@@ -456,7 +520,7 @@ export class SquigSyncCore {
   private performRedo(): boolean {
     const entry = this.redoHistory.pop()
     if (!entry) return false
-    const ops = conditionalTransitionOps(this.visibleDoc, entry.before, entry.after)
+    const ops = conditionalTransitionOps(this.visibleDoc, entry, "forward")
     if (!ops.length) return true
     this.history.push(entry)
     this.history = this.history.slice(-MAX_CONNECTED_HISTORY)
@@ -466,10 +530,15 @@ export class SquigSyncCore {
 
   private applyLocalCommand(ops: Op[]) {
     if (!ops.length) return
-    this.visibleDoc = applyOps(this.visibleDoc, ops)
+    const before = this.visibleDoc
+    this.visibleDoc = applyOps(before, ops)
+    const declarativeOps = diffDocs(before, this.visibleDoc)
+    if (!declarativeOps.length) return
     this.show(cloneWire(this.visibleDoc))
-    if (!this.ready) this.preSnapshotGroups.push(ops)
-    else this.enqueue(ops)
+    if (!this.ready) {
+      this.preSnapshotGroups.push(declarativeOps)
+      this.persistPendingIntents()
+    } else this.enqueue(declarativeOps)
   }
 
   private enqueue(ops: Op[]) {
@@ -478,7 +547,13 @@ export class SquigSyncCore {
       this.pending.push({ ops: chunk.ops, clientSeq: this.nextClientSeq++, blocked: chunk.blocked })
       if (chunk.blocked) this.fail({ code: "command_too_large", message: "This edit is too large to sync in one safe command. It remains visible locally; reduce it and retry.", retryable: true })
     }
+    this.persistPendingIntents()
     this.flush()
+  }
+
+  private persistPendingIntents() {
+    const intents = this.ready ? this.pending.map((command) => command.ops) : this.preSnapshotGroups
+    this.onPendingIntents?.(cloneWire(intents))
   }
 
   private rebuildVisible() {
@@ -550,6 +625,7 @@ export function startSquigSync(): () => void {
     const created = new SquigSyncCore({
       clientId,
       initialDoc: { nodes: state.nodes, order: state.order },
+      initialPendingIntents: loadPendingIntents(docId),
       send(message) {
         if (activeDocId === docId && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
       },
@@ -559,6 +635,11 @@ export function startSquigSync(): () => void {
       },
       onError(error) {
         if (activeDocId === docId && error) useSquig.getState().setNotice(`${error.message} Reconnect or save again to retry.`)
+      },
+      onPendingIntents(intents) {
+        if (!savePendingIntents(docId, intents) && activeDocId === docId) {
+          useSquig.getState().setNotice("Pending offline edits are too large for the recovery journal. Keep this tab open and reconnect before closing it.")
+        }
       },
     })
     cores.set(docId, created)

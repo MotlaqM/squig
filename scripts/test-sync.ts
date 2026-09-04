@@ -29,13 +29,19 @@ const local = new Map<string, string>()
 }
 
 const {
-  MAX_QUEUED_HISTORY_ACTIONS,
   SquigSyncCore,
   chunkCommands,
   createPageClientId,
   diffDocs,
   startSquigSync,
 } = await import("../lib/agent/sync.ts")
+const {
+  MAX_PENDING_INTENT_COMMANDS,
+  PENDING_INTENT_JOURNAL_VERSION,
+  loadPendingIntents,
+  pendingIntentJournalKey,
+  savePendingIntents,
+} = await import("../lib/agent/journal.ts")
 const { MAX_CLIENT_HEADS, MAX_COMMAND_BYTES, boundClientHeads, wireBytes } = await import("../lib/agent/protocol.ts")
 const { MAX_DOCUMENT_BYTES, MAX_DOCUMENT_NODES, serializedDocumentBytes, validDocument } = await import("../lib/agent/validate.ts")
 const { requestSecurity } = await import("../worker/security.ts")
@@ -184,6 +190,18 @@ function check(name: string, condition: boolean, detail = "") {
   check("page identity: no id is persisted in sessionStorage", ![...local.keys()].some((key) => key.includes("sync-client-id")))
 }
 
+// Pending intent storage is versioned, bounded, malformed-data safe, and document-scoped.
+{
+  local.clear()
+  const intent: Op[][] = [[{ t: "update", id: "shared", patch: { x: 10 } }]]
+  check("intent journal: current version round-trips", PENDING_INTENT_JOURNAL_VERSION === 1 && savePendingIntents("journal-a", intent) && sameValue(loadPendingIntents("journal-a"), intent))
+  check("intent journal: one document cannot read another document's intent", loadPendingIntents("journal-b").length === 0)
+  local.set(pendingIntentJournalKey("journal-b"), JSON.stringify({ version: 1, docId: "journal-b", intents: [[{ nope: true }]] }))
+  check("intent journal: malformed entries fail closed", loadPendingIntents("journal-b").length === 0 && !local.has(pendingIntentJournalKey("journal-b")))
+  const tooMany = Array.from({ length: MAX_PENDING_INTENT_COMMANDS + 1 }, () => intent[0])
+  check("intent journal: command count is bounded", !savePendingIntents("journal-c", tooMany) && loadPendingIntents("journal-c").length === 0)
+}
+
 // Edits made before the first snapshot are replayed over, rather than erased by, a non-empty server doc.
 {
   const initial: Doc = { nodes: {}, order: [] }
@@ -253,6 +271,10 @@ function check(name: string, condition: boolean, detail = "") {
   core.localOperations([{ t: "update", id: "a", patch: { text: "z".repeat(MAX_COMMAND_BYTES + 10_000) } }])
   check("payload: indivisible oversized edit remains visible", shown.nodes.a.type === "text" && shown.nodes.a.text.length > MAX_COMMAND_BYTES)
   check("payload: oversized edit is retained and surfaced", core.inspect().pending.length === 1 && core.inspect().error?.code === "command_too_large" && sent.length === 0)
+  core.undo()
+  check("payload: undo immediately cancels an oversized visible mutation", sameValue(shown, initial) && core.inspect().pending.length === 2)
+  core.retry()
+  check("payload: cancelled oversized intent recovers without recreating it", sameValue(core.inspect().visibleDoc, initial) && core.inspect().pending.length === 0 && core.inspect().error === null)
 }
 
 // A server rejection cannot discard the pending local command or replace its visible result.
@@ -267,6 +289,26 @@ function check(name: string, condition: boolean, detail = "") {
   check("rejection: pending command is not removed", core.inspect().pending.length === 1)
   check("rejection: authoritative snapshot does not erase local state", shown.order.join(",") === "kept")
   check("rejection: recoverable error is exposed", core.inspect().error?.retryable === true)
+}
+
+// Rejected edit, undo, and later edit retain their chronological user intent through retry.
+{
+  const initial: Doc = { nodes: {}, order: [] }
+  const sent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  let shown = initial
+  const core = new SquigSyncCore({ clientId: "rejected-order", initialDoc: initial, send: (message) => sent.push(message), show: (doc) => { shown = doc } })
+  core.setTransportOpen(true)
+  core.handleSnapshot({ type: "snapshot", doc: initial, rev: 0, acceptedClientSeq: 0 })
+  core.localOperations([{ t: "add", node: shape("b", 0) }])
+  core.handleSnapshot({ type: "snapshot", doc: initial, rev: 0, acceptedClientSeq: 0, reason: "invalid" })
+  core.undo()
+  core.localOperations([{ t: "add", node: shape("c", 30) }])
+  check("rejected ordering: visible intent is C before retry", shown.order.join(",") === "c" && core.inspect().pending.length === 3)
+  core.retry()
+  const retry = sent.at(-1)!
+  check("rejected ordering: retry sends only the final declarative intent", retry.ops?.length === 1 && retry.ops[0].t === "add" && retry.ops[0].node.id === "c")
+  core.handleServerOp({ type: "op", ops: retry.ops!, rev: 1, by: "rejected-order", clientSeq: retry.clientSeq! })
+  check("rejected ordering: retry converges to C without resurrecting B", core.inspect().baseDoc.order.join(",") === "c")
 }
 
 // The production store transaction/controller path emits one gesture and no cancelled gesture.
@@ -405,7 +447,7 @@ function check(name: string, condition: boolean, detail = "") {
   check("offline history: queued intents converge after reconnect", core.inspect().baseDoc.order.join(",") === "b" && core.inspect().pending.length === 0)
 }
 
-// A paused history action stays behind already-queued redo intent, then retries in FIFO order.
+// A paused undo occupies the intent stream behind an in-flight undo and queued redo.
 {
   const initial: Doc = { nodes: {}, order: [] }
   const sent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
@@ -421,19 +463,12 @@ function check(name: string, condition: boolean, detail = "") {
   core.redo()
   core.handleSnapshot({ type: "snapshot", doc: { nodes: { a: shape("a", 0), b: shape("b", 30) }, order: ["a", "b"] }, rev: 2, acceptedClientSeq: 2, reason: "invalid" })
   core.undo()
-  check("paused history: undo queues after earlier redo intent", core.inspect().queuedHistoryActions.join(",") === "undo" && core.inspect().visibleDoc.order.join(",") === "a,b")
+  check("paused history: undo follows earlier undo and redo intent", core.inspect().pending.map((command) => command.ops[0].t).join(",") === "remove,add,remove" && core.inspect().visibleDoc.order.join(",") === "a")
   core.retry()
   const retriedUndo = sent.at(-1)!
-  check("paused history: queued undo retries only after earlier intent is reconciled", core.inspect().queuedHistoryActions.length === 0 && core.inspect().visibleDoc.order.join(",") === "a" && retriedUndo.clientSeq === 3)
+  check("paused history: retry preserves the chronological net result", core.inspect().visibleDoc.order.join(",") === "a" && retriedUndo.clientSeq === 3)
   core.handleServerOp({ type: "op", ops: retriedUndo.ops!, rev: 3, by: "paused-history", clientSeq: retriedUndo.clientSeq! })
   check("paused history: FIFO retry converges", core.inspect().baseDoc.order.join(",") === "a")
-}
-
-// Pre-ready history requests are bounded rather than growing without limit.
-{
-  const core = new SquigSyncCore({ clientId: "bounded-requests", initialDoc: { nodes: {}, order: [] }, send: () => undefined, show: () => undefined })
-  for (let index = 0; index < MAX_QUEUED_HISTORY_ACTIONS + 20; index++) core.undo()
-  check("history FIFO: requested actions are bounded", core.inspect().queuedHistoryActions.length === MAX_QUEUED_HISTORY_ACTIONS)
 }
 
 // Connected history and Durable Object replay heads are bounded.
@@ -446,6 +481,20 @@ function check(name: string, condition: boolean, detail = "") {
   const bounded = boundClientHeads(heads)
   check("client heads: durable replay window is bounded", Object.keys(bounded).length === MAX_CLIENT_HEADS)
   check("client heads: newest replay heads are retained", !!bounded[`page-${MAX_CLIENT_HEADS + 43}`] && !bounded["page-0"])
+}
+
+// History retains only changed field values, even when the document contains multi-megabyte data.
+{
+  const large: Doc = {
+    nodes: { blob: textNode("blob", "x".repeat(4_000_000)), edited: shape("edited", 0) },
+    order: ["blob", "edited"],
+  }
+  const core = new SquigSyncCore({ clientId: "compact-history", initialDoc: large, send: () => undefined, show: () => undefined })
+  core.handleSnapshot({ type: "snapshot", doc: large, rev: 0, acceptedClientSeq: 0 })
+  for (let x = 1; x <= 100; x++) core.localOperations([{ t: "update", id: "edited", patch: { x } }])
+  const inspected = core.inspect()
+  check("compact history: repeated one-field edits retain one changed field each", inspected.historyDepth === 100 && inspected.historyChanges === 100)
+  check("compact history: multi-megabyte untouched content is not duplicated into history", inspected.historyBytes < 50_000, `bytes=${inspected.historyBytes}`)
 }
 
 // Full-document validation stays correct at the advertised limit without quadratic membership scans.
@@ -553,6 +602,39 @@ function check(name: string, condition: boolean, detail = "") {
   secondA.message({ type: "op", ops: resumed!.ops, rev: 6, by: resumed!.clientId, clientSeq: resumed!.clientSeq })
   check("document sessions: reopened document converges without losing the offline edit", useSquig.getState().docId === offlineDocId && useSquig.getState().nodes.offline.x === 10)
   stopSwitching()
+
+  // Tear down the entire sync runtime, then construct a new one as a reloaded
+  // page would. Only the separate intent journal bridges the two lifetimes.
+  FakeSocket.instances = []
+  local.clear()
+  setConnectedPersistenceMode(false)
+  const restartDocId = "offline-page-restart"
+  const restartRemote: Doc = { nodes: { restart: shape("restart", 0) }, order: ["restart"] }
+  useSquig.setState({ docId: restartDocId, fileName: "Restart A", nodes: restartRemote.nodes, order: restartRemote.order, files: [], past: [], future: [], stale: false, hydrated: true })
+  useSquig.getState().saveNow()
+  const stopBeforeRestart = startSquigSync()
+  const beforeRestart = FakeSocket.instances.at(-1)!
+  beforeRestart.open()
+  beforeRestart.message({ type: "snapshot", doc: restartRemote, rev: 5, acceptedClientSeq: 0 })
+  beforeRestart.close()
+  useSquig.getState().checkpoint()
+  useSquig.getState().updateNode("restart", { x: 10 }, { checkpoint: false })
+  useSquig.getState().commitCheckpoint()
+  useSquig.getState().saveNow()
+  check("page restart journal: offline intent is persisted outside the document", loadPendingIntents(restartDocId).length === 1)
+  stopBeforeRestart()
+
+  const socketCountBeforeNewStart = FakeSocket.instances.length
+  const stopAfterRestart = startSquigSync()
+  const afterRestart = FakeSocket.instances.at(-1)!
+  check("page restart journal: a new sync runtime opens a new transport", FakeSocket.instances.length === socketCountBeforeNewStart + 1)
+  afterRestart.open()
+  afterRestart.message({ type: "snapshot", doc: restartRemote, rev: 5, acceptedClientSeq: 0 })
+  const replayed = afterRestart.sent.map((value) => JSON.parse(value) as { type: string; ops?: Op[]; clientId?: string; clientSeq?: number }).findLast((message) => message.type === "op")
+  check("page restart journal: remote rev 5 snapshot replays cached x=10 intent", !!replayed && (replayed.ops?.[0] as { patch?: { x?: number } })?.patch?.x === 10 && useSquig.getState().nodes.restart.x === 10)
+  afterRestart.message({ type: "op", ops: replayed!.ops, rev: 6, by: replayed!.clientId, clientSeq: replayed!.clientSeq })
+  check("page restart journal: acknowledgement clears the persisted intent", loadPendingIntents(restartDocId).length === 0)
+  stopAfterRestart()
 
   ;(globalThis as { WebSocket?: unknown }).WebSocket = previousWebSocket
   globalThis.fetch = previousFetch
