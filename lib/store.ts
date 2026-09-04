@@ -507,6 +507,7 @@ function finishDocumentEdit(get: () => SquigState): boolean {
   documentEdit = null
   if (sameDoc(active.before, after)) {
     useSquig.setState({ past: active.past, future: active.future })
+    for (const listener of documentEditListeners) listener({ type: "cancel", docId: active.docId, before: active.before })
     return false
   }
   stampSelAfter(state.past, state.selection, state.selectionGroupId)

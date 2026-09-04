@@ -3,7 +3,6 @@
 import type { SquigNode } from "../types"
 import { applyOp } from "../ops/apply-op"
 import { seedFromId } from "../ops/context"
-import { invert } from "../ops/invert"
 import type { Doc, Op, OpContext } from "../ops/types"
 import { sameValue } from "../ops/value"
 import { validDocument } from "./validate"
@@ -40,7 +39,7 @@ const CLIENT_CONTEXT: OpContext = {
 }
 
 interface PendingCommand { ops: Op[]; clientSeq: number; blocked: boolean }
-interface HistoryEntry { forwardOps: Op[]; inverseOps: Op[] }
+interface HistoryEntry { before: Doc; after: Doc }
 type HistoryAction = "undo" | "redo"
 
 export interface SyncError {
@@ -131,14 +130,56 @@ export function diffDocs(before: Doc, after: Doc): Op[] {
   return ops
 }
 
-function inverseBatch(forwardOps: readonly Op[], docBefore: Doc): Op[] {
-  let current = docBefore
-  const raw: Op[][] = []
-  for (const op of forwardOps) {
-    raw.push(invert(op, current))
-    current = applyOp(current, op, CLIENT_CONTEXT).doc
+function hasOwn(value: object, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+/** Revert only document fields that still equal the result of the original edit. */
+export function conditionalTransitionOps(current: Doc, expected: Doc, wanted: Doc): Op[] {
+  const nodes: Record<string, SquigNode> = { ...current.nodes }
+  const nodeIds = new Set([...Object.keys(expected.nodes), ...Object.keys(wanted.nodes)])
+
+  for (const nodeId of nodeIds) {
+    const currentNode = current.nodes[nodeId]
+    const expectedNode = expected.nodes[nodeId]
+    const wantedNode = wanted.nodes[nodeId]
+    if (expectedNode && !wantedNode) {
+      if (currentNode && sameValue(currentNode, expectedNode)) delete nodes[nodeId]
+      continue
+    }
+    if (!expectedNode && wantedNode) {
+      if (!currentNode) nodes[nodeId] = cloneWire(wantedNode)
+      continue
+    }
+    if (!currentNode || !expectedNode || !wantedNode) continue
+
+    const next = { ...currentNode } as unknown as Record<string, unknown>
+    const currentRecord = currentNode as unknown as Record<string, unknown>
+    const expectedRecord = expectedNode as unknown as Record<string, unknown>
+    const wantedRecord = wantedNode as unknown as Record<string, unknown>
+    const fields = new Set([...Object.keys(expectedRecord), ...Object.keys(wantedRecord)])
+    for (const field of fields) {
+      const currentHas = hasOwn(currentRecord, field)
+      const expectedHas = hasOwn(expectedRecord, field)
+      if (currentHas !== expectedHas || (currentHas && !sameValue(currentRecord[field], expectedRecord[field]))) continue
+      if (hasOwn(wantedRecord, field)) next[field] = cloneWire(wantedRecord[field])
+      else delete next[field]
+    }
+    nodes[nodeId] = next as unknown as SquigNode
   }
-  return diffDocs(current, applyOps(current, raw.reverse().flat()))
+
+  const completeOrder = (sameValue(current.order, expected.order) ? wanted.order : current.order)
+    .filter((nodeId) => !!nodes[nodeId])
+  const ordered = new Set(completeOrder)
+  for (const source of [current.order, wanted.order, Object.keys(nodes)]) {
+    for (const nodeId of source) {
+      if (nodes[nodeId] && !ordered.has(nodeId)) {
+        completeOrder.push(nodeId)
+        ordered.add(nodeId)
+      }
+    }
+  }
+  return diffDocs(current, { nodes, order: completeOrder })
 }
 
 function empty(doc: Doc): boolean { return doc.order.length === 0 && Object.keys(doc.nodes).length === 0 }
@@ -260,7 +301,7 @@ export class SquigSyncCore {
       for (const ops of localGroups) {
         const next = applyOps(rebasedDoc, ops)
         if (!sameValue(rebasedDoc, next)) {
-          rebasedHistory.push({ forwardOps: ops, inverseOps: inverseBatch(ops, rebasedDoc) })
+          rebasedHistory.push({ before: rebasedDoc, after: next })
           this.enqueue(ops)
           rebasedDoc = next
         }
@@ -333,15 +374,13 @@ export class SquigSyncCore {
   }
 
   undo(): boolean {
-    if (this.paused) {
-      if (this.performUndo()) this.retry()
-      return true
-    }
-    return this.requestHistory("undo")
+    if (!this.ready || this.paused) return this.queueHistory("undo")
+    return this.performUndo()
   }
 
   redo(): boolean {
-    return this.requestHistory("redo")
+    if (!this.ready || this.paused) return this.queueHistory("redo")
+    return this.performRedo()
   }
 
   retry(): boolean {
@@ -380,7 +419,7 @@ export class SquigSyncCore {
     const next = applyOps(docBefore, forwardOps)
     this.visibleDoc = next
     this.show(cloneWire(next))
-    this.history.push({ forwardOps, inverseOps: inverseBatch(forwardOps, docBefore) })
+    this.history.push({ before: cloneWire(docBefore), after: cloneWire(next) })
     this.history = this.history.slice(-MAX_CONNECTED_HISTORY)
     this.redoHistory = []
     if (!this.ready) {
@@ -390,12 +429,9 @@ export class SquigSyncCore {
     this.enqueue(forwardOps)
   }
 
-  private requestHistory(action: HistoryAction): boolean {
-    if (!this.ready || this.paused || this.pending.length || this.inFlight !== null || this.historyRequests.length) {
-      if (this.historyRequests.length < MAX_QUEUED_HISTORY_ACTIONS) this.historyRequests.push(action)
-      return true
-    }
-    return action === "undo" ? this.performUndo() : this.performRedo()
+  private queueHistory(action: HistoryAction): boolean {
+    if (this.historyRequests.length < MAX_QUEUED_HISTORY_ACTIONS) this.historyRequests.push(action)
+    return true
   }
 
   private drainHistoryRequests() {
@@ -409,18 +445,22 @@ export class SquigSyncCore {
   private performUndo(): boolean {
     const entry = this.history.pop()
     if (!entry) return false
+    const ops = conditionalTransitionOps(this.visibleDoc, entry.after, entry.before)
+    if (!ops.length) return true
     this.redoHistory.push(entry)
     this.redoHistory = this.redoHistory.slice(-MAX_CONNECTED_HISTORY)
-    this.applyLocalCommand(entry.inverseOps)
+    this.applyLocalCommand(ops)
     return true
   }
 
   private performRedo(): boolean {
     const entry = this.redoHistory.pop()
     if (!entry) return false
+    const ops = conditionalTransitionOps(this.visibleDoc, entry.before, entry.after)
+    if (!ops.length) return true
     this.history.push(entry)
     this.history = this.history.slice(-MAX_CONNECTED_HISTORY)
-    this.applyLocalCommand(entry.forwardOps)
+    this.applyLocalCommand(ops)
     return true
   }
 
@@ -502,18 +542,29 @@ export function startSquigSync(): () => void {
   let activeDocId = useSquig.getState().docId
   let generation = 0
 
-  const show = (doc: Doc) => {
-    if (isDocumentEditActive()) return
-    applyAuthoritativeDocument(doc)
+  const cores = new Map<string, SquigSyncCore>()
+  const coreFor = (docId: string) => {
+    const existing = cores.get(docId)
+    if (existing) return existing
+    const state = useSquig.getState()
+    const created = new SquigSyncCore({
+      clientId,
+      initialDoc: { nodes: state.nodes, order: state.order },
+      send(message) {
+        if (activeDocId === docId && socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message))
+      },
+      show(doc) {
+        if (activeDocId !== docId || isDocumentEditActive()) return
+        applyAuthoritativeDocument(doc)
+      },
+      onError(error) {
+        if (activeDocId === docId && error) useSquig.getState().setNotice(`${error.message} Reconnect or save again to retry.`)
+      },
+    })
+    cores.set(docId, created)
+    return created
   }
-  const createCore = () => new SquigSyncCore({
-    clientId,
-    initialDoc: { nodes: useSquig.getState().nodes, order: useSquig.getState().order },
-    send(message) { if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message)) },
-    show,
-    onError(error) { if (error) useSquig.getState().setNotice(`${error.message} Reconnect or save again to retry.`) },
-  })
-  let core = createCore()
+  let core = coreFor(activeDocId)
 
   const updateIndex = async (action: "rename" | "save") => {
     const state = useSquig.getState()
@@ -595,6 +646,7 @@ export function startSquigSync(): () => void {
   })
   const unsubscribe = useSquig.subscribe((state, previous) => {
     if (state.docId !== previous.docId) {
+      core.setTransportOpen(false)
       generation++
       setConnectedPersistenceMode(false)
       if (reconnectTimer) clearTimeout(reconnectTimer)
@@ -604,7 +656,7 @@ export function startSquigSync(): () => void {
       previousSocket?.close(1000, "Document changed")
       activeDocId = state.docId
       setConnectedHistoryController(null)
-      core = createCore()
+      core = coreFor(activeDocId)
       connect(core, generation)
       return
     }
@@ -626,6 +678,7 @@ export function startSquigSync(): () => void {
     setConnectedHistoryController(null)
     setConnectedPersistenceMode(false)
     if (reconnectTimer) clearTimeout(reconnectTimer)
+    for (const session of cores.values()) session.setTransportOpen(false)
     socket?.close(1000, "Page closed")
   }
 }

@@ -87,6 +87,10 @@ function decodeJson<T>(value: string): T {
   return JSON.parse(new TextDecoder().decode(decodeBase64Url(value))) as T
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+}
+
 async function fetchJwks(url: string, fetcher: typeof fetch, now: number, force = false): Promise<AccessJwk[]> {
   if (!force && cachedJwks?.url === url && cachedJwks.expiresAt > now) return cachedJwks.keys
   const response = await fetcher(url, { headers: { Accept: "application/json" }, redirect: "error" })
@@ -113,16 +117,19 @@ async function verifyAccessJwt(
   const parts = token.split(".")
   if (parts.length !== 3) return null
 
-  let header: AccessJwtHeader
-  let payload: AccessJwtPayload
+  let decodedHeader: unknown
+  let decodedPayload: unknown
   let signature: Uint8Array<ArrayBuffer>
   try {
-    header = decodeJson<AccessJwtHeader>(parts[0])
-    payload = decodeJson<AccessJwtPayload>(parts[1])
+    decodedHeader = decodeJson<unknown>(parts[0])
+    decodedPayload = decodeJson<unknown>(parts[1])
     signature = decodeBase64Url(parts[2])
   } catch {
     return null
   }
+  if (!isRecord(decodedHeader) || !isRecord(decodedPayload)) return null
+  const header = decodedHeader as AccessJwtHeader
+  const payload = decodedPayload as AccessJwtPayload
   if (header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) return null
 
   const nowMs = dependencies.now?.() ?? Date.now()

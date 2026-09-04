@@ -37,12 +37,13 @@ const {
   startSquigSync,
 } = await import("../lib/agent/sync.ts")
 const { MAX_CLIENT_HEADS, MAX_COMMAND_BYTES, boundClientHeads, wireBytes } = await import("../lib/agent/protocol.ts")
-const { MAX_DOCUMENT_NODES, validDocument } = await import("../lib/agent/validate.ts")
+const { MAX_DOCUMENT_BYTES, MAX_DOCUMENT_NODES, serializedDocumentBytes, validDocument } = await import("../lib/agent/validate.ts")
 const { requestSecurity } = await import("../worker/security.ts")
 const {
   DOCUMENT_EDIT_FALLBACK_MS,
   applyAuthoritativeDocument,
   isConnectedPersistenceMode,
+  isDocumentEditActive,
   setConnectedHistoryController,
   setConnectedPersistenceMode,
   subscribeDocumentEdits,
@@ -65,6 +66,29 @@ const failures: string[] = []
 function check(name: string, condition: boolean, detail = "") {
   if (condition) passed++
   else failures.push(`${name}${detail ? ` — ${detail}` : ""}`)
+}
+
+// A same-field collaborator write cannot be overwritten by an older client's undo.
+{
+  const original: Doc = { nodes: { shared: shape("shared", 0) }, order: ["shared"] }
+  const sentA: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  const sentB: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  const coreA = new SquigSyncCore({ clientId: "same-field-a", initialDoc: original, send: (message) => sentA.push(message), show: () => undefined })
+  const coreB = new SquigSyncCore({ clientId: "same-field-b", initialDoc: original, send: (message) => sentB.push(message), show: () => undefined })
+  for (const core of [coreA, coreB]) {
+    core.setTransportOpen(true)
+    core.handleSnapshot({ type: "snapshot", doc: original, rev: 0, acceptedClientSeq: 0 })
+  }
+  coreA.localOperations([{ t: "update", id: "shared", patch: { x: 10 } }])
+  const byA = sentA[0]
+  for (const core of [coreA, coreB]) core.handleServerOp({ type: "op", ops: byA.ops!, rev: 1, by: "same-field-a", clientSeq: byA.clientSeq! })
+  coreB.localOperations([{ t: "update", id: "shared", patch: { x: 20 } }])
+  const byB = sentB[0]
+  for (const core of [coreA, coreB]) core.handleServerOp({ type: "op", ops: byB.ops!, rev: 2, by: "same-field-b", clientSeq: byB.clientSeq! })
+  const beforeUndoCommands = sentA.length
+  coreA.undo()
+  check("conditional undo: later collaborator field value remains visible", coreA.inspect().visibleDoc.nodes.shared.x === 20 && coreB.inspect().visibleDoc.nodes.shared.x === 20)
+  check("conditional undo: conflicting inverse is safely refused", sentA.length === beforeUndoCommands && coreA.inspect().pending.length === 0)
 }
 
 // A non-idempotent flip is visible immediately, then its own echo only advances the base.
@@ -298,6 +322,28 @@ function check(name: string, condition: boolean, detail = "") {
   setConnectedHistoryController(null)
 }
 
+// Closing a no-op gesture re-presents a remote edit that arrived while the store hid it.
+{
+  const original: Doc = { nodes: { noop: shape("noop", 0) }, order: ["noop"] }
+  useSquig.setState({ docId: "noop-doc", nodes: original.nodes, order: original.order, selection: [], past: [], future: [], transforming: false })
+  const core = new SquigSyncCore({
+    clientId: "noop-local",
+    initialDoc: original,
+    send: () => undefined,
+    show: (doc) => {
+      if (!isDocumentEditActive()) useSquig.setState({ nodes: doc.nodes, order: doc.order })
+    },
+  })
+  const unsubscribe = subscribeDocumentEdits((event) => event.type === "commit" ? core.localDocumentGesture(event.before, event.after) : core.present())
+  core.handleSnapshot({ type: "snapshot", doc: original, rev: 0, acceptedClientSeq: 0 })
+  useSquig.getState().checkpoint()
+  core.handleServerOp({ type: "op", ops: [{ t: "update", id: "noop", patch: { x: 45 } }], rev: 1, by: "noop-remote", clientSeq: 1 })
+  check("no-op gesture: remote presentation is hidden only while the edit is active", useSquig.getState().nodes.noop.x === 0)
+  useSquig.getState().commitCheckpoint()
+  check("no-op gesture: close re-presents the accepted remote edit", useSquig.getState().nodes.noop.x === 45)
+  unsubscribe()
+}
+
 // A deferred edit is closed against its originating file before any store-owned document transition.
 {
   const events: Array<{ type: string; docId: string; before: Doc; after?: Doc }> = []
@@ -318,29 +364,74 @@ function check(name: string, condition: boolean, detail = "") {
   unsubscribe()
 }
 
-// History requests are a bounded FIFO, so fast undo/undo/redo input is not collapsed or discarded.
+// Undo is an immediate optimistic intent, ordered between an unacknowledged edit and the next edit.
 {
   const initial: Doc = { nodes: {}, order: [] }
   const sent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
-  const core = new SquigSyncCore({ clientId: "history-fifo", initialDoc: initial, send: (message) => sent.push(message), show: () => undefined })
+  let shown = initial
+  const core = new SquigSyncCore({ clientId: "history-order", initialDoc: initial, send: (message) => sent.push(message), show: (doc) => { shown = doc } })
+  core.setTransportOpen(true)
+  core.handleSnapshot({ type: "snapshot", doc: initial, rev: 0, acceptedClientSeq: 0 })
+  core.localOperations([{ t: "add", node: shape("a", 0) }])
+  core.undo()
+  check("history order: undo before acknowledgement updates the visible document immediately", shown.order.length === 0)
+  core.localOperations([{ t: "add", node: shape("b", 30) }])
+  check("history order: a later edit follows the undo optimistically", shown.order.join(",") === "b" && core.inspect().pending.length === 3)
+  for (let rev = 1; rev <= 3; rev++) {
+    const command = sent[rev - 1]
+    core.handleServerOp({ type: "op", ops: command.ops!, rev, by: "history-order", clientSeq: command.clientSeq! })
+  }
+  check("history order: edit, undo, edit converges in intent order", core.inspect().baseDoc.order.join(",") === "b" && core.inspect().pending.length === 0)
+}
+
+// The same intent order is preserved while the transport is offline after a valid connection.
+{
+  const initial: Doc = { nodes: {}, order: [] }
+  const sent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  let shown = initial
+  const core = new SquigSyncCore({ clientId: "offline-history", initialDoc: initial, send: (message) => sent.push(message), show: (doc) => { shown = doc } })
+  core.setTransportOpen(true)
+  core.handleSnapshot({ type: "snapshot", doc: initial, rev: 4, acceptedClientSeq: 0 })
+  core.setTransportOpen(false)
+  core.localOperations([{ t: "add", node: shape("a", 0) }])
+  core.undo()
+  core.localOperations([{ t: "add", node: shape("b", 30) }])
+  check("offline history: edit, undo, edit remains visible in order", shown.order.join(",") === "b" && core.inspect().pending.length === 3 && sent.length === 0)
+  core.setTransportOpen(true)
+  for (let rev = 5; rev <= 7; rev++) {
+    const command = sent[rev - 5]
+    core.handleServerOp({ type: "op", ops: command.ops!, rev, by: "offline-history", clientSeq: command.clientSeq! })
+  }
+  check("offline history: queued intents converge after reconnect", core.inspect().baseDoc.order.join(",") === "b" && core.inspect().pending.length === 0)
+}
+
+// A paused history action stays behind already-queued redo intent, then retries in FIFO order.
+{
+  const initial: Doc = { nodes: {}, order: [] }
+  const sent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  const core = new SquigSyncCore({ clientId: "paused-history", initialDoc: initial, send: (message) => sent.push(message), show: () => undefined })
   core.setTransportOpen(true)
   core.handleSnapshot({ type: "snapshot", doc: initial, rev: 0, acceptedClientSeq: 0 })
   for (const [index, id] of ["a", "b"].entries()) {
     core.localOperations([{ t: "add", node: shape(id, index * 30) }])
     const command = sent.at(-1)!
-    core.handleServerOp({ type: "op", ops: command.ops!, rev: index + 1, by: "history-fifo", clientSeq: command.clientSeq! })
+    core.handleServerOp({ type: "op", ops: command.ops!, rev: index + 1, by: "paused-history", clientSeq: command.clientSeq! })
   }
-  core.undo()
   core.undo()
   core.redo()
-  check("history FIFO: two undos and a redo remain ordered while one command is pending", core.inspect().queuedHistoryActions.join(",") === "undo,redo")
-  for (let rev = 3; rev <= 5; rev++) {
-    const command = sent.at(-1)!
-    core.handleServerOp({ type: "op", ops: command.ops!, rev, by: "history-fifo", clientSeq: command.clientSeq! })
-  }
-  check("history FIFO: ordered undo/undo/redo leaves exactly the first edit", core.inspect().visibleDoc.order.join(",") === "a")
+  core.handleSnapshot({ type: "snapshot", doc: { nodes: { a: shape("a", 0), b: shape("b", 30) }, order: ["a", "b"] }, rev: 2, acceptedClientSeq: 2, reason: "invalid" })
+  core.undo()
+  check("paused history: undo queues after earlier redo intent", core.inspect().queuedHistoryActions.join(",") === "undo" && core.inspect().visibleDoc.order.join(",") === "a,b")
+  core.retry()
+  const retriedUndo = sent.at(-1)!
+  check("paused history: queued undo retries only after earlier intent is reconciled", core.inspect().queuedHistoryActions.length === 0 && core.inspect().visibleDoc.order.join(",") === "a" && retriedUndo.clientSeq === 3)
+  core.handleServerOp({ type: "op", ops: retriedUndo.ops!, rev: 3, by: "paused-history", clientSeq: retriedUndo.clientSeq! })
+  check("paused history: FIFO retry converges", core.inspect().baseDoc.order.join(",") === "a")
+}
 
-  core.localOperations([{ t: "add", node: shape("pending", 90) }])
+// Pre-ready history requests are bounded rather than growing without limit.
+{
+  const core = new SquigSyncCore({ clientId: "bounded-requests", initialDoc: { nodes: {}, order: [] }, send: () => undefined, show: () => undefined })
   for (let index = 0; index < MAX_QUEUED_HISTORY_ACTIONS + 20; index++) core.undo()
   check("history FIFO: requested actions are bounded", core.inspect().queuedHistoryActions.length === MAX_QUEUED_HISTORY_ACTIONS)
 }
@@ -365,6 +456,12 @@ function check(name: string, condition: boolean, detail = "") {
   check("document validation: rejects duplicate z-order ids", !validDocument({ nodes, order: [...order.slice(0, -1), order[0]] }))
   const overLimitId = "large-over-limit"
   check("document validation: rejects documents above the 10k-node limit", !validDocument({ nodes: { ...nodes, [overLimitId]: shape(overLimitId, 0) }, order: [...order, overLimitId] }))
+
+  const cumulativeOrder = Array.from({ length: 53 }, (_, index) => `bytes-${index}`)
+  const cumulativeNodes = Object.fromEntries(cumulativeOrder.map((id) => [id, textNode(id, "x".repeat(600_000))]))
+  const cumulativeDoc = { nodes: cumulativeNodes, order: cumulativeOrder }
+  check("document validation: cumulative serialized bytes exceed the conservative snapshot cap", serializedDocumentBytes(cumulativeDoc) > MAX_DOCUMENT_BYTES)
+  check("document validation: rejects a cumulatively oversized snapshot document", !validDocument(cumulativeDoc))
 }
 
 // Authoritative persistence begins only after a valid snapshot and ends with the transport.
@@ -390,12 +487,13 @@ function check(name: string, condition: boolean, detail = "") {
     static instances: FakeSocket[] = []
     readyState = 0
     readonly url: string
+    readonly sent: string[] = []
     constructor(url: string) {
       super()
       this.url = url
       FakeSocket.instances.push(this)
     }
-    send() {}
+    send(value: string) { this.sent.push(value) }
     open() {
       this.readyState = FakeSocket.OPEN
       this.dispatchEvent(new Event("open"))
@@ -422,6 +520,39 @@ function check(name: string, condition: boolean, detail = "") {
   socket.close()
   check("persistence lease: transport close restores the offline stale guard", !isConnectedPersistenceMode())
   stopConnected()
+
+  // A ready document keeps its offline pending intent when another file is
+  // opened and routes it only through that document's next connection.
+  FakeSocket.instances = []
+  local.clear()
+  setConnectedPersistenceMode(false)
+  const offlineDocId = "offline-existing-revision"
+  const remoteOfflineDoc: Doc = { nodes: { offline: shape("offline", 0) }, order: ["offline"] }
+  useSquig.setState({ docId: offlineDocId, fileName: "Offline A", nodes: remoteOfflineDoc.nodes, order: remoteOfflineDoc.order, files: [], past: [], future: [], stale: false, hydrated: true })
+  useSquig.getState().saveNow()
+  const stopSwitching = startSquigSync()
+  const firstA = FakeSocket.instances.at(-1)!
+  firstA.open()
+  firstA.message({ type: "snapshot", doc: remoteOfflineDoc, rev: 5, acceptedClientSeq: 0 })
+  firstA.close()
+  useSquig.getState().checkpoint()
+  useSquig.getState().updateNode("offline", { x: 10 }, { checkpoint: false })
+  useSquig.getState().commitCheckpoint()
+  useSquig.getState().saveNow()
+  useSquig.getState().newFile()
+  const otherDocId = useSquig.getState().docId
+  const socketB = FakeSocket.instances.at(-1)!
+  socketB.open()
+  useSquig.getState().openFile(offlineDocId)
+  const secondA = FakeSocket.instances.at(-1)!
+  secondA.open()
+  secondA.message({ type: "snapshot", doc: remoteOfflineDoc, rev: 5, acceptedClientSeq: 0 })
+  const resumed = secondA.sent.map((value) => JSON.parse(value) as { type: string; ops?: Op[]; clientId?: string; clientSeq?: number }).findLast((message) => message.type === "op")
+  check("document sessions: offline edit survives a switch from a nonzero revision", !!resumed && (resumed.ops?.[0] as { patch?: { x?: number } })?.patch?.x === 10)
+  check("document sessions: pending edit is never sent through the other document", !socketB.sent.some((value) => (JSON.parse(value) as { type?: string }).type === "op") && otherDocId !== offlineDocId)
+  secondA.message({ type: "op", ops: resumed!.ops, rev: 6, by: resumed!.clientId, clientSeq: resumed!.clientSeq })
+  check("document sessions: reopened document converges without losing the offline edit", useSquig.getState().docId === offlineDocId && useSquig.getState().nodes.offline.x === 10)
+  stopSwitching()
 
   ;(globalThis as { WebSocket?: unknown }).WebSocket = previousWebSocket
   globalThis.fetch = previousFetch
@@ -486,6 +617,8 @@ function check(name: string, condition: boolean, detail = "") {
 
   const missing = await requestSecurity(new Request("https://worker/api/docs", { headers: { "Cf-Access-Authenticated-User-Email": "person@example.com" } }), env, { fetch: fetchJwks, now: () => nowMs })
   check("security: production fails closed when only the identity header is present", missing instanceof Response && missing.status === 401)
+  const nullParts = await requestSecurity(new Request("https://worker/api/docs", { headers: { "Cf-Access-Jwt-Assertion": "bnVsbA.bnVsbA.eA" } }), env, { fetch: fetchJwks, now: () => nowMs })
+  check("security: null JWT header and payload fail closed without throwing", nullParts instanceof Response && nullParts.status === 401)
   for (const [name, token] of [
     ["issuer", await signToken({ ...claims, iss: "https://other.cloudflareaccess.com" })],
     ["audience", await signToken({ ...claims, aud: ["other-audience"] })],
