@@ -283,6 +283,60 @@ function check(name: string, condition: boolean, detail = "") {
   check("lost ack conflict: conflicting stale transition is cleared", loadPendingIntents(docId).length === 0)
 }
 
+// A partially accepted chunked reorder resumes from the authoritative intermediate order.
+{
+  local.clear()
+  const docId = "lost-ack-chunked-reorder"
+  const ids = Array.from({ length: 205 }, (_, index) => `chunk-order-${index}`)
+  const original: Doc = {
+    nodes: Object.fromEntries(ids.map((id, index) => [id, shape(id, index)])),
+    order: ids,
+  }
+  const intended = apply(original, [{ t: "reorder", ids: [ids.at(-1)!], to: "back" }])
+  const oldPageId = createPageClientId()
+  const oldSent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  const oldCore = new SquigSyncCore({
+    clientId: oldPageId,
+    initialDoc: original,
+    send: (message) => oldSent.push(message),
+    show: () => undefined,
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  oldCore.setTransportOpen(true)
+  oldCore.handleSnapshot({ type: "snapshot", doc: original, rev: 5, acceptedClientSeq: 0 })
+  oldCore.localOperations([{ t: "reorder", ids: [ids.at(-1)!], to: "back" }])
+  const originalChunks = oldCore.inspect().pending.map((command) => command.ops)
+  check("partial lost ack: 205-node reorder is split 100/100/4", originalChunks.map((ops) => ops.length).join(",") === "100,100,4")
+  check("partial lost ack: journal retains every ordered chunk transition", loadPendingIntents(docId).length === 3)
+
+  let serverDoc = apply(original, originalChunks[0])
+  oldCore.setTransportOpen(false)
+  const newPageId = createPageClientId()
+  const newSent: Array<{ type: string; ops?: Op[]; clientSeq?: number }> = []
+  let shown = serverDoc
+  const newCore = new SquigSyncCore({
+    clientId: newPageId,
+    initialDoc: serverDoc,
+    initialPendingIntents: loadPendingIntents(docId),
+    send: (message) => newSent.push(message),
+    show: (doc) => { shown = doc },
+    onPendingIntents: (intents) => void savePendingIntents(docId, intents),
+  })
+  newCore.setTransportOpen(true)
+  newCore.handleSnapshot({ type: "snapshot", doc: serverDoc, rev: 6, acceptedClientSeq: 0 })
+  check("partial lost ack: restart uses a genuinely new page identity", oldPageId !== newPageId)
+  check("partial lost ack: accepted first chunk is not resent", newCore.inspect().pending.length === 2 && newSent.length === 1 && sameValue(newSent[0].ops, originalChunks[1]))
+  check("partial lost ack: optimistic replay reaches the intended final order", sameValue(shown.order, intended.order))
+
+  for (let index = 0; index < 2; index++) {
+    const command = newSent[index]
+    serverDoc = apply(serverDoc, command.ops!)
+    newCore.handleServerOp({ type: "op", ops: command.ops!, rev: 7 + index, by: newPageId, clientSeq: command.clientSeq! })
+  }
+  check("partial lost ack: only the remaining 100/4 chunks are transmitted", newSent.map((command) => command.ops?.length).join(",") === "100,4" && sameValue(newSent[1].ops, originalChunks[2]))
+  check("partial lost ack: resumed chunks converge and clear the journal", sameValue(serverDoc, intended) && sameValue(newCore.inspect().baseDoc, intended) && newCore.inspect().pending.length === 0 && loadPendingIntents(docId).length === 0)
+}
+
 // A semantically invalid restored transition cannot discard a valid edit made by the new page.
 {
   const original: Doc = { nodes: { base: shape("base", 0) }, order: ["base"] }

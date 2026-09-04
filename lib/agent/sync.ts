@@ -287,7 +287,7 @@ export class SquigSyncCore {
       }
       const rebasedOps = diffDocs(message.doc, rebasedDoc)
       if (rebasedOps.length) {
-        this.enqueue(rebasedOps, captureIntentTransition(message.doc, rebasedDoc))
+        this.enqueue(rebasedOps, message.doc)
       }
       this.history = boundedHistory(rebasedHistory)
       this.redoHistory = []
@@ -372,7 +372,7 @@ export class SquigSyncCore {
     this.nextClientSeq = this.acceptedClientSeq + 1
     this.clearError()
     const retryOps = diffDocs(this.baseDoc, wanted)
-    if (retryOps.length) this.enqueue(retryOps, captureIntentTransition(this.baseDoc, wanted))
+    if (retryOps.length) this.enqueue(retryOps, this.baseDoc)
     this.rebuildVisible()
     this.persistPendingIntents()
     this.flush()
@@ -412,7 +412,7 @@ export class SquigSyncCore {
       this.persistPendingIntents()
       return
     }
-    this.enqueue(declarativeOps, transition)
+    this.enqueue(declarativeOps, docBefore)
   }
 
   private performUndo(): boolean {
@@ -446,13 +446,17 @@ export class SquigSyncCore {
     if (!this.ready) {
       this.preSnapshotIntents.push({ transition, ops: declarativeOps })
       this.persistPendingIntents()
-    } else this.enqueue(declarativeOps, transition)
+    } else this.enqueue(declarativeOps, before)
   }
 
-  private enqueue(ops: Op[], intent: IntentTransition) {
+  private enqueue(ops: Op[], startDoc: Doc) {
     if (!ops.length) return
+    let intermediate = cloneWire(startDoc)
     for (const chunk of chunkCommands(ops, this.clientId, this.nextClientSeq, this.serverRev)) {
+      const next = applyOps(intermediate, chunk.ops)
+      const intent = captureIntentTransition(intermediate, next)
       this.pending.push({ ops: chunk.ops, clientSeq: this.nextClientSeq++, blocked: chunk.blocked, intent })
+      intermediate = next
       if (chunk.blocked) this.fail({ code: "command_too_large", message: "This edit is too large to sync in one safe command. It remains visible locally; reduce it and retry.", retryable: true })
     }
     this.persistPendingIntents()
@@ -461,10 +465,7 @@ export class SquigSyncCore {
 
   private persistPendingIntents() {
     const intents = this.ready
-      ? this.pending.reduce<IntentTransition[]>((entries, command, index) => {
-          if (!index || command.intent !== this.pending[index - 1].intent) entries.push(command.intent)
-          return entries
-        }, [])
+      ? this.pending.map((command) => command.intent)
       : this.preSnapshotIntents.map((intent) => intent.transition)
     this.onPendingIntents?.(cloneWire(intents))
   }
