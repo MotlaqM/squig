@@ -24,6 +24,7 @@ export type ClientChatFrame = ChatStartFrame | ReviewAcceptFrame | ReviewRejectF
 
 export interface ChatDeltaFrame { type: "chat.delta"; turnId: string; delta: string }
 export interface ChatToolFrame { type: "chat.tool"; turnId: string; name: string; summary: string; affected: string[] }
+export interface ReviewIdentityFrame { type: "review.identity"; reviewOwnerId: string }
 export interface ReviewPendingFrame {
   type: "review.pending"
   turnId: string
@@ -54,6 +55,12 @@ export interface ChatErrorFrame {
   message: string
 }
 export type ServerChatFrame = ChatDeltaFrame | ChatToolFrame | ReviewPendingFrame | ChatCompletedFrame | SelectionSetFrame | ChatErrorFrame
+
+export function isReviewIdentityFrame(value: unknown): value is ReviewIdentityFrame {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  const candidate = value as { type?: unknown; reviewOwnerId?: unknown }
+  return candidate.type === "review.identity" && typeof candidate.reviewOwnerId === "string" && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate.reviewOwnerId)
+}
 
 export function isServerChatFrame(value: unknown): value is ServerChatFrame {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false

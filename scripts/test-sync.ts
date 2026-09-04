@@ -33,8 +33,10 @@ const {
   SquigSyncCore,
   chunkCommands,
   createPageClientId,
-  loadPageClientId,
   diffDocs,
+  loadReviewOwnerId,
+  reviewOwnerStorageKey,
+  saveReviewOwnerId,
   startSquigSync,
 } = await import("../lib/agent/sync.ts")
 const {
@@ -185,20 +187,27 @@ function check(name: string, condition: boolean, detail = "") {
   check("serializable ops: deletion round-trips exactly", sameValue(apply(before, wire), after))
 }
 
-// The same tab reclaims its identity across reloads; independent realms can still allocate fresh ids.
+// Duplicated session storage may copy review recovery, but it must never copy sync operation identity.
 {
-  const values = new Map<string, string>()
-  const storage = {
-    getItem: (key: string) => values.get(key) ?? null,
-    setItem: (key: string, value: string) => void values.set(key, value),
+  const sourceValues = new Map<string, string>()
+  const sourceStorage = {
+    getItem: (key: string) => sourceValues.get(key) ?? null,
+    setItem: (key: string, value: string) => void sourceValues.set(key, value),
   }
-  const reloadedFirst = loadPageClientId(storage)
-  const reloadedSecond = loadPageClientId(storage)
-  const firstPage = createPageClientId()
-  const secondPage = createPageClientId()
-  check("page identity: one tab reuses its narrow session identity", reloadedFirst === reloadedSecond && values.size === 1)
-  check("page identity: independently initialized realms can still allocate distinct ids", firstPage !== secondPage)
-  check("page identity: unavailable session storage falls back safely", typeof loadPageClientId({ getItem: () => { throw new Error("blocked") }, setItem: () => { throw new Error("blocked") } }) === "string")
+  const documentId = "review-capability-copy"
+  const serverIssuedOwnerId = "server-issued-review-owner"
+  check("review identity: server-issued capability is stored for one document", saveReviewOwnerId(documentId, serverIssuedOwnerId, sourceStorage))
+  const copiedValues = new Map(sourceValues)
+  const copiedStorage = {
+    getItem: (key: string) => copiedValues.get(key) ?? null,
+    setItem: (key: string, value: string) => void copiedValues.set(key, value),
+  }
+  const sourceSyncClientId = createPageClientId()
+  const duplicateSyncClientId = createPageClientId()
+  check("review identity: copied storage can present only the stored review capability", loadReviewOwnerId(documentId, copiedStorage) === serverIssuedOwnerId)
+  check("page identity: duplicated tabs always allocate distinct sync client ids", sourceSyncClientId !== duplicateSyncClientId)
+  check("page identity: sync client ids are never persisted in copied storage", ![...copiedValues.values()].includes(sourceSyncClientId) && ![...copiedValues.values()].includes(duplicateSyncClientId) && copiedValues.size === 1 && copiedValues.has(reviewOwnerStorageKey(documentId)))
+  check("review identity: unavailable session storage fails closed", loadReviewOwnerId(documentId, { getItem: () => { throw new Error("blocked") } }) === null)
 }
 
 // Pending intent storage is versioned, bounded, malformed-data safe, and document-scoped.

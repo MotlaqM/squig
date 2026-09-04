@@ -33,7 +33,7 @@ import {
   type ServerOpMessage,
   type SnapshotMessage,
 } from "./protocol"
-import { isServerChatFrame } from "./chat-protocol"
+import { isReviewIdentityFrame, isServerChatFrame } from "./chat-protocol"
 import { handleServerChatFrame, resetChatClient, setChatRevision, setChatTransport } from "./chat-client"
 
 export type { ClientOpCommand, ServerOpMessage, SnapshotMessage } from "./protocol"
@@ -504,23 +504,34 @@ export class SquigSyncCore {
 
 /** Allocate an id for a genuinely new page/tab identity. */
 export function createPageClientId(): string { return crypto.randomUUID() }
-export const PAGE_CLIENT_ID_STORAGE_KEY = "squig:sync:page-client-id:v1"
+const REVIEW_OWNER_STORAGE_PREFIX = "squig:agent:review-owner:v1:"
 
-/** Keep one tab's id across reloads so it can reclaim owner-only review state. */
-export function loadPageClientId(storage?: Pick<Storage, "getItem" | "setItem">): string {
-  if (!storage) return createPageClientId()
+export function reviewOwnerStorageKey(docId: string): string {
+  return `${REVIEW_OWNER_STORAGE_PREFIX}${encodeURIComponent(docId)}`
+}
+
+/** Read only a server-issued review capability; sync operation ids are never persisted. */
+export function loadReviewOwnerId(docId: string, storage?: Pick<Storage, "getItem">): string | null {
+  if (!storage) return null
   try {
-    const existing = storage.getItem(PAGE_CLIENT_ID_STORAGE_KEY)
-    if (existing && /^[A-Za-z0-9._:-]{1,128}$/.test(existing)) return existing
-    const created = createPageClientId()
-    storage.setItem(PAGE_CLIENT_ID_STORAGE_KEY, created)
-    return created
+    const existing = storage.getItem(reviewOwnerStorageKey(docId))
+    return existing && /^[A-Za-z0-9._:-]{1,128}$/.test(existing) ? existing : null
   } catch {
-    return createPageClientId()
+    return null
   }
 }
 
-const PAGE_CLIENT_ID = loadPageClientId(typeof sessionStorage === "undefined" ? undefined : sessionStorage)
+export function saveReviewOwnerId(docId: string, reviewOwnerId: string, storage?: Pick<Storage, "setItem">): boolean {
+  if (!storage || !/^[A-Za-z0-9._:-]{1,128}$/.test(reviewOwnerId)) return false
+  try {
+    storage.setItem(reviewOwnerStorageKey(docId), reviewOwnerId)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const PAGE_CLIENT_ID = createPageClientId()
 
 function configuredWorkerUrl(): string | null {
   const configured = process.env.NEXT_PUBLIC_SQUIG_WORKER_URL?.trim()
@@ -528,10 +539,11 @@ function configuredWorkerUrl(): string | null {
   return ["localhost", "127.0.0.1"].includes(window.location.hostname) ? LOCAL_WORKER_URL : null
 }
 
-function wsUrl(workerUrl: string, docId: string, clientId: string): string {
+function wsUrl(workerUrl: string, docId: string, clientId: string, reviewOwnerId: string | null): string {
   const url = new URL(`/agents/squig-doc/${encodeURIComponent(docId)}`, workerUrl)
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:"
   url.searchParams.set("clientId", clientId)
+  if (reviewOwnerId) url.searchParams.set("reviewOwnerId", reviewOwnerId)
   return url.toString()
 }
 
@@ -543,6 +555,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
   if (!workerUrl) return () => undefined
 
   const clientId = options.clientId ?? PAGE_CLIENT_ID
+  const reviewOwnerStorage = typeof sessionStorage === "undefined" ? undefined : sessionStorage
   let disposed = false
   let socket: WebSocket | null = null
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -607,7 +620,7 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
     if (disposed) return
     let opened: WebSocket
     try {
-      opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId))
+      opened = new WebSocket(wsUrl(workerUrl, activeDocId, clientId, loadReviewOwnerId(activeDocId, reviewOwnerStorage)))
     } catch {
       setConnectedPersistenceMode(false)
       scheduleReconnect(session, sessionGeneration)
@@ -629,7 +642,9 @@ export function startSquigSync(options: { clientId?: string } = {}): () => void 
         opened.close(1002, "Unexpected framework protocol")
         return
       }
-      if (type === "snapshot") {
+      if (isReviewIdentityFrame(message)) {
+        saveReviewOwnerId(activeDocId, message.reviewOwnerId, reviewOwnerStorage)
+      } else if (type === "snapshot") {
         if (!session.handleSnapshot(message as SnapshotMessage)) {
           if (sessionGeneration === generation) setConnectedPersistenceMode(false)
           opened.close(1002, "Invalid snapshot")

@@ -1,7 +1,7 @@
 import { Agent, type Connection, type ConnectionContext, type WSMessage } from "agents"
 import { nanoid } from "nanoid"
 import { z } from "zod"
-import { CHAT_MODELS, type ChatCompletedFrame, type ChatErrorFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
+import { CHAT_MODELS, type ChatCompletedFrame, type ChatErrorFrame, type ReviewIdentityFrame, type ReviewPendingFrame } from "../lib/agent/chat-protocol"
 import { boundedToolResultMessage } from "../lib/agent/model-context-budget"
 import { boundClientHeads, MAX_COMMAND_BYTES, MAX_COMMAND_OPS, type ClientHead } from "../lib/agent/protocol"
 import { compactInverseOps, createServerToolDraft, executeServerTool, SERVER_TOOL_DEFINITIONS, type ServerToolDraft } from "../lib/agent/server-tools"
@@ -29,7 +29,7 @@ interface AgentTurnRecord {
 
 interface PendingReview {
   turnId: string
-  clientId: string
+  reviewOwnerId: string
   baseRev: number
   model: SquigModel
   ops: Op[]
@@ -46,7 +46,7 @@ export interface SquigDocState extends Doc {
   pendingReview?: PendingReview
 }
 
-interface SquigConnectionState { clientId: string }
+interface SquigConnectionState { clientId: string; reviewOwnerId: string }
 type SnapshotReason = "duplicate" | "invalid" | "sequence_gap" | "stale_revision" | "resync"
 
 const id = z.string().min(1).max(128)
@@ -103,9 +103,20 @@ function validBaseState(value: unknown): value is Omit<SquigDocState, "agentTurn
   return Object.values(state.clientHeads).every((head) => !!head && Number.isInteger(head.seq) && head.seq >= 0 && Number.isInteger(head.rev) && head.rev >= 0 && head.rev <= state.rev!)
 }
 
-function clientIdFrom(request: Request): string | null {
-  const candidate = new URL(request.url).searchParams.get("clientId")
+function queryIdFrom(request: Request, key: "clientId" | "reviewOwnerId"): string | null {
+  const candidate = new URL(request.url).searchParams.get(key)
   return candidate && /^[A-Za-z0-9._:-]{1,128}$/.test(candidate) ? candidate : null
+}
+
+async function sameCapability(provided: string, expected: string): Promise<boolean> {
+  const encoder = new TextEncoder()
+  const [providedHash, expectedHash] = await Promise.all([
+    crypto.subtle.digest("SHA-256", encoder.encode(provided)),
+    crypto.subtle.digest("SHA-256", encoder.encode(expected)),
+  ])
+  // The Workers runtime extends SubtleCrypto with timingSafeEqual; lib.dom does not declare it.
+  const subtle = crypto.subtle as SubtleCrypto & { timingSafeEqual(a: ArrayBuffer, b: ArrayBuffer): boolean }
+  return subtle.timingSafeEqual(providedHash, expectedHash)
 }
 
 function boundedTurns(turns: AgentTurnRecord[]): AgentTurnRecord[] {
@@ -118,7 +129,7 @@ function errorMessage(error: unknown): string {
 
 function finalRequesterSelection(draft: ServerToolDraft): string[] {
   const wanted = new Set([...draft.affected, ...draft.selection])
-  return draft.doc.order.filter((nodeId) => wanted.has(nodeId) && !draft.doc.nodes[nodeId].locked)
+  return draft.doc.order.filter((nodeId) => wanted.has(nodeId))
 }
 
 class ToolExecutionError extends Error {}
@@ -134,8 +145,8 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
       return
     }
     const turns = Array.isArray(this.state.agentTurns) ? this.state.agentTurns : []
-    const pending = this.state.pendingReview as (PendingReview & { clientId?: unknown }) | undefined
-    const pendingReview = pending && typeof pending.clientId === "string" && pending.clientId ? pending : undefined
+    const pending = this.state.pendingReview as (PendingReview & { reviewOwnerId?: unknown }) | undefined
+    const pendingReview = pending && typeof pending.reviewOwnerId === "string" && pending.reviewOwnerId ? pending : undefined
     if (turns !== this.state.agentTurns || pendingReview !== pending) {
       this.setState({ ...this.state, agentTurns: turns, pendingReview })
     }
@@ -143,17 +154,22 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
 
   shouldSendProtocolMessages() { return false }
 
-  onConnect(connection: Connection, context: ConnectionContext) {
-    const clientId = clientIdFrom(context.request)
+  async onConnect(connection: Connection, context: ConnectionContext) {
+    const clientId = queryIdFrom(context.request, "clientId")
     if (!clientId) {
       connection.close(1008, "A valid clientId is required")
       return
     }
-    connection.setState({ clientId } satisfies SquigConnectionState)
+    const presented = queryIdFrom(context.request, "reviewOwnerId")
+    const pendingAtConnect = this.state.pendingReview
+    const presentedMatches = !!presented && !!pendingAtConnect && await sameCapability(presented, pendingAtConnect.reviewOwnerId)
+    const currentPending = this.state.pendingReview
+    const resumesPending = presentedMatches && currentPending?.turnId === pendingAtConnect?.turnId && currentPending.reviewOwnerId === pendingAtConnect.reviewOwnerId
+    const reviewOwnerId = resumesPending && currentPending ? currentPending.reviewOwnerId : crypto.randomUUID()
+    connection.setState({ clientId, reviewOwnerId } satisfies SquigConnectionState)
+    connection.send(JSON.stringify({ type: "review.identity", reviewOwnerId } satisfies ReviewIdentityFrame))
     this.sendSnapshot(connection, clientId)
-    if (this.state.pendingReview?.clientId === clientId) {
-      connection.send(JSON.stringify(this.pendingFrame(this.state.pendingReview)))
-    }
+    if (resumesPending && currentPending) connection.send(JSON.stringify(this.pendingFrame(currentPending)))
   }
 
   async onMessage(connection: Connection, message: WSMessage) {
@@ -208,20 +224,32 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     try { doc = applyOps(doc, command.ops as Op[], REDUCER_CONTEXT) } catch { this.sendSnapshot(connection, clientId, "invalid"); return }
     if (!validDocument(doc)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     const rev = state.rev + 1
+    const invalidated = state.pendingReview ? {
+      turnId: state.pendingReview.turnId,
+      baseRev: state.pendingReview.baseRev,
+      committedRev: rev,
+      status: "rejected" as const,
+      completion: "rejected" as const,
+      model: state.pendingReview.model,
+      inverseOps: [],
+      affected: state.pendingReview.affected,
+    } : null
     const next: SquigDocState = {
       ...state, nodes: doc.nodes, order: doc.order, rev,
       clientHeads: boundClientHeads({ ...state.clientHeads, [clientId]: { seq: command.clientSeq, rev } }),
+      ...(invalidated ? { pendingReview: undefined, agentTurns: boundedTurns([...state.agentTurns, invalidated]) } : {}),
     }
     if (!this.persistState(next)) { this.sendSnapshot(connection, clientId, "invalid"); return }
     this.broadcast(JSON.stringify({ type: "op", ops: command.ops, rev, by: clientId, clientSeq: command.clientSeq }))
+    if (invalidated && state.pendingReview) this.sendToReviewOwner(state.pendingReview.reviewOwnerId, this.completedFrame(invalidated))
   }
 
   private async handleChatStart(connection: Connection, command: z.infer<typeof chatStartSchema>) {
-    const clientId = this.connectionClientId(connection)
+    const reviewOwnerId = this.connectionReviewOwnerId(connection)
     const existing = this.state.agentTurns.find((turn) => turn.turnId === command.turnId)
     if (existing) { this.sendCompleted(connection, existing); return }
     if (this.state.pendingReview?.turnId === command.turnId) {
-      if (this.state.pendingReview.clientId !== clientId) { this.sendError(connection, "not_found", "Pending review not found", command.turnId); return }
+      if (this.state.pendingReview.reviewOwnerId !== reviewOwnerId) { this.sendError(connection, "not_found", "Pending review not found", command.turnId); return }
       connection.send(JSON.stringify(this.pendingFrame(this.state.pendingReview)))
       return
     }
@@ -271,7 +299,7 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
       const selection = finalRequesterSelection(draft)
       if (command.review && draft.ops.length) {
         const pending: PendingReview = {
-          turnId: command.turnId, clientId, baseRev, model, ops: draft.ops, inverseOps: compactInverseOps(draft.inverseOps),
+          turnId: command.turnId, reviewOwnerId, baseRev, model, ops: draft.ops, inverseOps: compactInverseOps(draft.inverseOps),
           affected: draft.affected, selection, message,
         }
         if (!this.persistState({ ...this.state, pendingReview: pending })) {
@@ -298,7 +326,7 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     if (existing) { this.sendCompleted(connection, existing); return }
     const pending = this.state.pendingReview
     if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
-    if (pending.clientId !== this.connectionClientId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (pending.reviewOwnerId !== this.connectionReviewOwnerId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
     if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
     if (pending.baseRev !== this.state.rev) { this.sendError(connection, "stale_review", "The canvas changed after this review was prepared", turnId); return }
     let doc: Doc
@@ -318,7 +346,7 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
     if (existing) { this.sendCompleted(connection, existing); return }
     const pending = this.state.pendingReview
     if (!pending || pending.turnId !== turnId) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
-    if (pending.clientId !== this.connectionClientId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
+    if (pending.reviewOwnerId !== this.connectionReviewOwnerId(connection)) { this.sendError(connection, "not_found", "Pending review not found", turnId); return }
     if (clientRev !== this.state.rev) { this.sendError(connection, "stale_revision", "The canvas revision is stale", turnId); return }
     const record: AgentTurnRecord = {
       turnId, baseRev: pending.baseRev, committedRev: this.state.rev, status: "rejected", completion: "rejected",
@@ -395,6 +423,17 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
 
   private connectionClientId(connection: Connection): string {
     return (connection.state as SquigConnectionState | null)?.clientId ?? "invalid-client"
+  }
+
+  private connectionReviewOwnerId(connection: Connection): string {
+    return (connection.state as SquigConnectionState | null)?.reviewOwnerId ?? "invalid-review-owner"
+  }
+
+  private sendToReviewOwner(reviewOwnerId: string, frame: ChatCompletedFrame) {
+    const message = JSON.stringify(frame)
+    for (const connection of this.getConnections<SquigConnectionState>()) {
+      if (connection.state?.reviewOwnerId === reviewOwnerId) connection.send(message)
+    }
   }
 
   private sendSnapshot(connection: Connection, clientId: string, reason?: SnapshotReason) {

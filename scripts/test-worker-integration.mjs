@@ -29,9 +29,10 @@ function shape(id, x) {
 }
 
 class CoreClient {
-  constructor(docId, clientId) {
+  constructor(docId, clientId, reviewOwnerId = null) {
     this.docId = docId
     this.clientId = clientId
+    this.reviewOwnerId = reviewOwnerId
     this.doc = { nodes: {}, order: [] }
     this.messages = []
     this.waiters = new Set()
@@ -51,6 +52,7 @@ class CoreClient {
     const url = new URL(`/agents/squig-doc/${encodeURIComponent(this.docId)}`, origin)
     url.protocol = "ws:"
     url.searchParams.set("clientId", this.clientId)
+    if (this.reviewOwnerId) url.searchParams.set("reviewOwnerId", this.reviewOwnerId)
     const socket = new WebSocket(url)
     this.socket = socket
     const opened = new Promise((resolveOpen, reject) => {
@@ -64,9 +66,11 @@ class CoreClient {
       const message = JSON.parse(String(event.data))
       if (typeof message.type === "string" && message.type.startsWith("cf_agent_")) fatal = new Error(`Competing Agents SDK frame received: ${message.type}`)
       const chatFrame = ["chat.delta", "chat.tool", "review.pending", "chat.completed", "selection.set", "chat.error"].includes(message.type)
-      if (message.type !== "snapshot" && message.type !== "op" && !chatFrame) fatal = new Error(`Unexpected WebSocket frame: ${message.type}`)
+      const identityFrame = message.type === "review.identity" && typeof message.reviewOwnerId === "string"
+      if (message.type !== "snapshot" && message.type !== "op" && !chatFrame && !identityFrame) fatal = new Error(`Unexpected WebSocket frame: ${message.type}`)
       this.messages.push(message)
-      if (message.type === "snapshot") this.core.handleSnapshot(message)
+      if (identityFrame) this.reviewOwnerId = message.reviewOwnerId
+      else if (message.type === "snapshot") this.core.handleSnapshot(message)
       else if (message.type === "op") {
         if (this.dropOwnEcho && message.by === this.clientId) this.dropOwnEcho = false
         else this.core.handleServerOp(message)
@@ -299,19 +303,27 @@ async function run() {
   assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0 && pending.ops.length === 1, "pending review changed the serialized document")
   await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   assert(!reviewB.messages.slice(reviewBCursor).some((message) => message.type === "review.pending"), "non-requester received review.pending")
-  for (const type of ["review.accept", "review.reject"]) {
-    const unauthorizedCursor = reviewB.messages.length
-    reviewB.send({ type, turnId: "review-accept", clientRev: 0 })
-    await reviewB.waitForMessage((message) => message.type === "chat.error" && message.turnId === "review-accept" && message.code === "not_found", unauthorizedCursor)
-    assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0, `non-requester ${type} changed pending review state`)
+  const ownerCapability = reviewA.reviewOwnerId
+  assert(typeof ownerCapability === "string" && ownerCapability.length > 20, "review owner did not receive a private server-issued capability")
+  const spoof = await new CoreClient("phase4-review-accept", reviewA.clientId).open()
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  assert(spoof.reviewOwnerId !== ownerCapability && !spoof.messages.some((message) => message.type === "review.pending"), "public clientId spoof recovered the private pending review")
+  for (const [client, label] of [[reviewB, "other client"], [spoof, "clientId spoof"]]) {
+    for (const type of ["review.accept", "review.reject"]) {
+      const unauthorizedCursor = client.messages.length
+      client.send({ type, turnId: "review-accept", clientRev: 0 })
+      await client.waitForMessage((message) => message.type === "chat.error" && message.turnId === "review-accept" && message.code === "not_found", unauthorizedCursor)
+      assert(reviewA.core.inspect().serverRev === 0 && reviewA.doc.order.length === 0, `${label} ${type} changed pending review state`)
+    }
   }
-  await Promise.all([reviewA.close(), reviewB.close()])
+  await Promise.all([reviewA.close(), reviewB.close(), spoof.close()])
   await stopWorker()
   await startWorker()
-  const [reviewReloadA, reviewReloadB] = await openPair("phase4-review-accept", "review")
+  const reviewReloadA = await new CoreClient("phase4-review-accept", "review-reloaded-a", ownerCapability).open()
+  const reviewReloadB = await new CoreClient("phase4-review-accept", "review-reloaded-b").open()
   const recovered = await reviewReloadA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-accept", 0, 5000)
   await new Promise((resolveWait) => setTimeout(resolveWait, 100))
-  assert(recovered.baseRev === 0 && recovered.ops.length === 1, "owning tab did not recover pending review after restart")
+  assert(reviewReloadA.clientId !== reviewA.clientId && reviewReloadA.reviewOwnerId === ownerCapability && recovered.baseRev === 0 && recovered.ops.length === 1, "owning tab did not recover pending review with a new sync id and its private capability")
   assert(!reviewReloadB.messages.some((message) => message.type === "review.pending"), "other client recovered someone else's pending review")
   const acceptCursor = reviewReloadA.messages.length
   const acceptedBCursor = reviewReloadB.messages.length
@@ -321,6 +333,16 @@ async function run() {
   assert(reviewReloadA.doc.order.length === 1, "accepted review did not commit")
   assert(reviewReloadA.messages.slice(acceptCursor).some((message) => message.type === "selection.set" && message.ids.length === 1), "review owner did not receive accepted selection")
   assert(!reviewReloadB.messages.slice(acceptedBCursor).some((message) => message.type === "selection.set"), "non-requester received accepted review selection")
+
+  const [lockA, lockB] = await openPair("phase4-lock-selection", "lock")
+  lockA.core.localOperations([{ t: "add", node: shape("lock-target", 10) }])
+  await waitConverged([lockA, lockB], 1)
+  const lockBCursor = lockB.messages.length
+  const locked = await startChat(lockA, { type: "chat.start", turnId: "lock-turn", clientRev: 1, prompt: "lock the selected node", review: false, model: "default", selection: ["lock-target"] })
+  await waitConverged([lockA, lockB], 2)
+  const lockSelection = lockA.messages.slice(locked.cursor).find((message) => message.type === "selection.set")
+  assert(lockA.doc.nodes["lock-target"].locked === true && lockSelection?.ids.join(",") === "lock-target", "lock turn did not keep its newly locked affected node selected")
+  assert(!lockB.messages.slice(lockBCursor).some((message) => message.type === "selection.set"), "lock turn selection leaked to a non-requester")
 
   const [rejectA, rejectB] = await openPair("phase4-review-reject", "reject")
   const rejectedPendingCursor = rejectA.messages.length
@@ -335,12 +357,23 @@ async function run() {
   const stalePendingCursor = staleA.messages.length
   staleA.send({ type: "chat.start", turnId: "review-stale", clientRev: 0, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
   await staleA.waitForMessage((message) => message.type === "review.pending", stalePendingCursor, 5000)
+  const staleCompletionCursor = staleA.messages.length
+  const staleBCursor = staleB.messages.length
+  const staleOwnerCapability = staleA.reviewOwnerId
   staleB.core.localOperations([{ t: "add", node: shape("human-change", 0) }])
   await waitConverged([staleA, staleB], 1)
+  await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected", staleCompletionCursor)
+  assert(!staleB.messages.slice(staleBCursor).some((message) => message.type === "chat.completed" && message.turnId === "review-stale"), "pending invalidation completion leaked beyond its owner")
   const staleAcceptCursor = staleA.messages.length
   staleA.send({ type: "review.accept", turnId: "review-stale", clientRev: 1 })
-  await staleA.waitForMessage((message) => message.type === "chat.error" && message.code === "stale_review", staleAcceptCursor)
-  assert(staleA.doc.order.join(",") === "human-change", "stale review modified the document")
+  await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected", staleAcceptCursor)
+  assert(staleA.doc.order.join(",") === "human-change" && staleA.core.inspect().serverRev === 1, "invalidated review accept modified the document")
+  await Promise.all([staleA.close(), staleB.close()])
+  const staleReload = await new CoreClient("phase4-review-stale", "stale-reloaded", staleOwnerCapability).open()
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  assert(!staleReload.messages.some((message) => message.type === "review.pending"), "invalidated pending review reappeared after reconnect")
+  const afterInvalidation = await startChat(staleReload, { type: "chat.start", turnId: "after-invalidation", clientRev: 1, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
+  assert(afterInvalidation.completed.rev === 2, "invalidated pending review continued blocking new turns")
 
   const [conflictA, conflictB] = await openPair("phase4-undo-conflict", "conflict")
   await startChat(conflictA, { type: "chat.start", turnId: "contested-turn", clientRev: 0, prompt: BUTTON_PROMPT, review: false, model: "default", selection: [] })
@@ -368,7 +401,7 @@ async function run() {
   assert(landingSelection?.ids.length === 7 && landingA.doc.order.every((id) => landingSelection.ids.includes(id)), "landing requester selection did not contain all seven affected nodes")
   assert(!landingB.messages.slice(landingBCursor).some((message) => message.type === "selection.set"), "landing non-requester received selection.set")
 
-  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
+  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), lockA.close(), lockB.close(), rejectA.close(), rejectB.close(), staleReload.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
 
   assert(!fatal, fatal?.message ?? "protocol failure")
   console.log(JSON.stringify({
@@ -384,7 +417,8 @@ async function run() {
     security: "both loopback origins/preflights allowed locally; foreign docs and agent origins rejected",
     wranglerRestart: "state and D1 persisted",
     fakeButton: "one revision at 100,100; requester-only selection",
-    review: "pending doc unchanged; owner-only recovery/control/selection, accept, reject, and stale refusal passed",
+    review: "server-capability recovery/control passed; spoof refused; human revision invalidated pending review",
+    lockedSelection: "requester retained its newly locked affected node; collaborator received no selection",
     agentUndo: "exact restore passed; contested undo refused",
     noOp: "zero revision and no affected nodes",
     landingFixture: "nav, hero, three features, pricing, footer in one multi-round revision",

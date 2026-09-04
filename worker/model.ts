@@ -67,6 +67,10 @@ function fakeReply(messages: readonly ModelMessage[]): ModelReply {
   if (prompt === "insert a button at 100,100" && toolResults === 0) {
     return { content: "", toolCalls: [{ id: "fake-button", type: "function", function: { name: "insert_component", arguments: JSON.stringify({ kind: "button", x: 100, y: 100 }) } }] }
   }
+  if (prompt === "lock the selected node" && toolResults === 0) {
+    return { content: "", toolCalls: [{ id: "fake-lock", type: "function", function: { name: "lock", arguments: JSON.stringify({ ids: "selection" }) } }] }
+  }
+  if (prompt === "lock the selected node" && toolResults > 0) return { content: "Locked the selected node.", toolCalls: [] }
   if (toolResults > 0) return { content: "Added the requested button at 100, 100.", toolCalls: [] }
   return { content: "I’m ready to edit the canvas.", toolCalls: [] }
 }
