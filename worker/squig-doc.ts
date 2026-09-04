@@ -447,9 +447,9 @@ export class SquigDoc extends Agent<Env, SquigDocState> {
   }
 
   private rotateInvalidatedReviewOwner(reviewOwnerId: string, frame: ChatCompletedFrame) {
-    const nextReviewOwnerId = crypto.randomUUID()
     for (const connection of this.getConnections<SquigConnectionState>()) {
       if (!connection.state?.reviewReady || connection.state.reviewOwnerId !== reviewOwnerId) continue
+      const nextReviewOwnerId = crypto.randomUUID()
       connection.setState({ ...connection.state, reviewOwnerId: nextReviewOwnerId })
       connection.send(JSON.stringify({ type: "review.identity", reviewOwnerId: nextReviewOwnerId } satisfies ReviewIdentityFrame))
       connection.send(JSON.stringify(frame))

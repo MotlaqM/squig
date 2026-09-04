@@ -407,10 +407,15 @@ async function run() {
   const staleCompletionCursor = staleA.messages.length
   const staleBCursor = staleB.messages.length
   const staleOwnerCapability = staleA.reviewOwnerId
+  const liveCopiedCapability = await new CoreClient("phase4-review-stale", "live-copied-capability", staleOwnerCapability).open()
+  await liveCopiedCapability.waitForMessage((message) => message.type === "review.pending" && message.turnId === "review-stale", 0, 5000)
+  assert(liveCopiedCapability.reviewOwnerId === staleOwnerCapability, "live copied capability did not exercise the shared pending-review bearer")
   staleB.core.localOperations([{ t: "add", node: shape("human-change", 0) }])
   await waitConverged([staleA, staleB], 1)
   await staleA.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected", staleCompletionCursor)
   assert(staleA.reviewOwnerId !== staleOwnerCapability, "live review owner capability was not rotated on human invalidation")
+  await liveCopiedCapability.waitForMessage((message) => message.type === "chat.completed" && message.turnId === "review-stale" && message.status === "rejected")
+  assert(liveCopiedCapability.reviewOwnerId !== staleOwnerCapability && liveCopiedCapability.reviewOwnerId !== staleA.reviewOwnerId, "live owner and copied connection received the same replacement capability")
   assert(!staleB.messages.slice(staleBCursor).some((message) => message.type === "chat.completed" && message.turnId === "review-stale"), "pending invalidation completion leaked beyond its owner")
   const staleAcceptCursor = staleA.messages.length
   staleA.send({ type: "review.accept", turnId: "review-stale", clientRev: 1 })
@@ -418,8 +423,16 @@ async function run() {
   assert(staleA.doc.order.join(",") === "human-change" && staleA.core.inspect().serverRev === 1, "invalidated review accept modified the document")
   const rotatedCapability = staleA.reviewOwnerId
   const nextPendingCursor = staleA.messages.length
+  const liveCopiedNextCursor = liveCopiedCapability.messages.length
   staleA.send({ type: "chat.start", turnId: "after-invalidation-review", clientRev: 1, prompt: BUTTON_PROMPT, review: true, model: "default", selection: [] })
   await staleA.waitForMessage((message) => message.type === "review.pending" && message.turnId === "after-invalidation-review", nextPendingCursor, 5000)
+  await new Promise((resolveWait) => setTimeout(resolveWait, 100))
+  assert(!liveCopiedCapability.messages.slice(liveCopiedNextCursor).some((message) => message.type === "review.pending" && message.turnId === "after-invalidation-review"), "live copied connection saw the genuine owner's later pending review")
+  for (const type of ["review.accept", "review.reject"]) {
+    const copiedControlCursor = liveCopiedCapability.messages.length
+    liveCopiedCapability.send({ type, turnId: "after-invalidation-review", clientRev: 1 })
+    await liveCopiedCapability.waitForMessage((message) => message.type === "chat.error" && message.turnId === "after-invalidation-review" && message.code === "not_found", copiedControlCursor)
+  }
   const staleTokenClient = await new CoreClient("phase4-review-stale", "stale-token-client", staleOwnerCapability).open()
   await new Promise((resolveWait) => setTimeout(resolveWait, 100))
   assert(staleTokenClient.reviewOwnerId !== staleOwnerCapability && staleTokenClient.reviewOwnerId !== rotatedCapability && !staleTokenClient.messages.some((message) => message.type === "review.pending"), "invalidated review token recovered a later pending review")
@@ -473,7 +486,7 @@ async function run() {
   assert(landingSelection?.ids.length === 7 && landingA.doc.order.every((id) => landingSelection.ids.includes(id)), "landing requester selection did not contain all seven affected nodes")
   assert(!landingB.messages.slice(landingBCursor).some((message) => message.type === "selection.set"), "landing non-requester received selection.set")
 
-  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), lockA.close(), lockB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), staleTokenClient.close(), disconnectedA.close(), disconnectedB.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
+  await Promise.all([chatA.close(), chatB.close(), reviewReloadA.close(), reviewReloadB.close(), lockA.close(), lockB.close(), rejectA.close(), rejectB.close(), staleA.close(), staleB.close(), liveCopiedCapability.close(), staleTokenClient.close(), disconnectedA.close(), disconnectedB.close(), conflictA.close(), conflictB.close(), noOpA.close(), noOpB.close(), landingA.close(), landingB.close()])
 
   assert(!fatal, fatal?.message ?? "protocol failure")
   console.log(JSON.stringify({

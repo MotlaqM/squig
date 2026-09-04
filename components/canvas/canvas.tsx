@@ -342,6 +342,7 @@ export function Canvas() {
   const nodes = useSquig((s) => s.nodes)
   const order = useSquig((s) => s.order)
   const selection = useSquig((s) => s.selection)
+  const agentSelection = useSquig((s) => s.agentSelection)
   const viewport = useSquig((s) => s.viewport)
   const tool = useSquig((s) => s.tool)
   const grid = useSquig((s) => s.grid)
@@ -2397,6 +2398,10 @@ export function Canvas() {
     () => selection.map((id) => nodes[id]).filter(Boolean) as SquigNode[],
     [selection, nodes]
   )
+  const agentSelectedNodes = useMemo(
+    () => agentSelection.map((id) => nodes[id]).filter((node): node is SquigNode => !!node?.locked),
+    [agentSelection, nodes]
+  )
   const placingDef = placing ? getDef(placing) : null
   // the picture being cropped comes out of the document order and is redrawn
   // on top, under its own dimmed ghost — the mode is a spotlight, and a node
@@ -2549,6 +2554,28 @@ export function Canvas() {
           }}
         />
       )}
+
+      {/* The agent may point at a layer it just locked. This cursor is visual
+          only: resize handles and every human command still read `selection`,
+          whose selectable invariant excludes locked nodes. */}
+      {agentSelectedNodes.map((node) => {
+        const bounds = nodeVisualBounds(node)
+        return (
+          <div
+            key={`agent-selection-${node.id}`}
+            data-squig-agent-selection=""
+            aria-hidden="true"
+            className="pointer-events-none absolute rounded-sm border border-dashed"
+            style={{
+              left: bounds.x * v.zoom + v.x,
+              top: bounds.y * v.zoom + v.y,
+              width: bounds.w * v.zoom,
+              height: bounds.h * v.zoom,
+              borderColor: "color-mix(in srgb, var(--sq-select) 70%, transparent)",
+            }}
+          />
+        )
+      })}
 
       {/* what the arrow end in hand would attach to — the same hint the hover
           draws, turned up, because this one is a promise about what happens

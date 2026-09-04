@@ -96,6 +96,8 @@ interface SquigState {
   nodes: Record<string, SquigNode>
   order: string[]
   selection: string[]
+  /** Locked nodes highlighted by the agent, never consumed by human commands. */
+  agentSelection: string[]
   /** the exact group represented by `selection`; needed once groups nest */
   selectionGroupId: string | null
   viewport: Viewport
@@ -355,7 +357,8 @@ export function applyAuthoritativeDocument(doc: DocFields): void {
     useSquig.setState({
       nodes: doc.nodes,
       order: doc.order,
-      selection: state.selection.filter((nodeId) => doc.nodes[nodeId]),
+      selection: selectable(state.selection, doc.nodes),
+      agentSelection: state.agentSelection.filter((nodeId) => doc.nodes[nodeId]?.locked),
       selectionGroupId: null,
       stale: false,
     })
@@ -924,6 +927,7 @@ export const useSquig = create<SquigState>((set, get) => ({
   nodes: {},
   order: [],
   selection: [],
+  agentSelection: [],
   selectionGroupId: null,
   viewport: { x: 0, y: 0, zoom: 1 },
   tool: "select",
@@ -1067,13 +1071,16 @@ export const useSquig = create<SquigState>((set, get) => ({
   setAgentSelection: (ids) => {
     set((s) => {
       const want = new Set(ids.filter((id) => !!s.nodes[id]))
-      const next = s.order.filter((id) => want.has(id))
+      const next = selectable(s.order.filter((id) => want.has(id)), s.nodes)
+      const agentSelection = s.order.filter((id) => want.has(id) && s.nodes[id]?.locked)
       if (
         s.selectionGroupId === null &&
         next.length === s.selection.length &&
-        next.every((id, i) => s.selection[i] === id)
+        next.every((id, i) => s.selection[i] === id) &&
+        agentSelection.length === s.agentSelection.length &&
+        agentSelection.every((id, i) => s.agentSelection[i] === id)
       ) return s
-      return { selection: next, selectionGroupId: null }
+      return { selection: next, agentSelection, selectionGroupId: null }
     })
   },
   setCommandOpen: (open) =>

@@ -38,7 +38,7 @@ const { MAX_MODEL_CONTEXT_BYTES, boundedToolResultMessage } = await import("../l
 const { handleServerChatFrame, inspectChatClient, resetChatClient, setChatTransport } = await import("../lib/agent/chat-client.ts")
 const { isUndoableAgentCompletion } = await import("../lib/agent/chat-protocol.ts")
 const { applyOps } = await import("../lib/ops/invert.ts")
-const { useSquig } = await import("../lib/store.ts")
+const { applyAuthoritativeDocument, useSquig } = await import("../lib/store.ts")
 import type { ArrowNode, DrawNode, ImageNode, SquigNode, TextNode } from "../lib/types.ts"
 
 let passed = 0
@@ -105,6 +105,7 @@ function reset(nodes: Record<string, SquigNode> = {}, order: string[] = []) {
     nodes,
     order,
     selection: [],
+    agentSelection: [],
     selectionGroupId: null,
     past: [],
     future: [],
@@ -407,14 +408,30 @@ const registration = await registerSquigTools(
   resetChatClient()
 }
 
-// Agent selection may reveal its own newly locked work without changing human selection rules.
+// Agent feedback keeps locked nodes visible without feeding them to human commands.
 {
   const locked: SquigNode = { id: "agent-locked", type: "shape", shape: "rect", fill: "none", x: 0, y: 0, w: 40, h: 40, seed: 1, locked: true }
-  reset({ "agent-locked": locked }, ["agent-locked"])
+  const unlocked: SquigNode = { id: "agent-unlocked", type: "shape", shape: "rect", fill: "none", x: 50, y: 0, w: 40, h: 40, seed: 2 }
+  reset({ "agent-locked": locked, "agent-unlocked": unlocked }, ["agent-locked", "agent-unlocked"])
   state().setSelection(["agent-locked"])
   check("human selection still refuses locked nodes", state().selection.length === 0)
-  handleServerChatFrame({ type: "selection.set", turnId: "lock-turn", rev: 1, ids: ["agent-locked"] })
-  check("agent selection reaches the real store with its locked affected node", state().selection.join(",") === "agent-locked")
+  handleServerChatFrame({ type: "selection.set", turnId: "lock-turn", rev: 1, ids: ["agent-locked", "agent-unlocked"] })
+  check("agent feedback keeps locked ids out of actionable selection", state().selection.join(",") === "agent-unlocked")
+  check("agent feedback retains a non-actionable locked cursor", state().agentSelection.join(",") === "agent-locked")
+  state().deleteSelected()
+  check("human delete after agent feedback preserves the locked node", !!state().nodes["agent-locked"])
+  check("human delete after agent feedback still removes unlocked selected nodes", !state().nodes["agent-unlocked"])
+}
+
+// A collaborator locking the local selection also closes the human mutation path.
+{
+  const initiallyUnlocked: SquigNode = { id: "remote-lock", type: "shape", shape: "rect", fill: "none", x: 0, y: 0, w: 40, h: 40, seed: 3 }
+  reset({ "remote-lock": initiallyUnlocked }, ["remote-lock"])
+  state().setSelection(["remote-lock"])
+  applyAuthoritativeDocument({ nodes: { "remote-lock": { ...initiallyUnlocked, locked: true } }, order: ["remote-lock"] })
+  check("authoritative lock removes the node from actionable selection", state().selection.length === 0)
+  state().deleteSelected()
+  check("human delete after a remote lock preserves the locked node", !!state().nodes["remote-lock"])
 }
 
 // A document no-op after undo must hand the complete redo branch back.
